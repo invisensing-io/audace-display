@@ -1,0 +1,16 @@
+# Build artifacts
+/build/
+/dist/
+*.egg-info/
+__pycache__/
+*.py[cod]
+
+# Test / tooling caches
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# venvs
+.venv/
+venv/
