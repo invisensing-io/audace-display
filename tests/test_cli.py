@@ -1,8 +1,15 @@
 """End-to-end CLI tests (headless, PNG output)."""
 import numpy as np
 import pytest
+from invisensing import File as _File
 
 from audace_display.cli import main
+
+# Scope mode needs invisensing>=1.1.0 (O(1) per-line seek). Skip cleanly on older.
+needs_seek = pytest.mark.skipif(
+    not hasattr(_File, "seek_lines"),
+    reason="scope mode needs invisensing>=1.1.0 (seek_lines)",
+)
 
 
 def _png_nonempty(path):
@@ -85,6 +92,7 @@ def test_missing_file_returns_error(tmp_path, capsys):
 # --- Scope (animated oscilloscope) -------------------------------------------
 
 
+@needs_seek
 def test_scope_save_static_frame(raw_dat, tmp_path):
     """--save freezes a line to PNG (no animation)."""
     out = tmp_path / "frame.png"
@@ -93,6 +101,7 @@ def test_scope_save_static_frame(raw_dat, tmp_path):
     assert _png_nonempty(out)
 
 
+@needs_seek
 def test_scope_routes_to_mpl_animation(raw_dat, monkeypatch):
     """Without --save, routes to the matplotlib animation; get_y reads a line."""
     from audace_display import plotting
@@ -109,6 +118,7 @@ def test_scope_routes_to_mpl_animation(raw_dat, monkeypatch):
     assert captured["y"].ndim == 1 and captured["y"].size > 0
 
 
+@needs_seek
 def test_auto_raw_routes_to_scope(raw_dat, monkeypatch):
     """The default for a raw file is now the animated oscilloscope."""
     from audace_display import plotting

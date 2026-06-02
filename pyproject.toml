@@ -25,7 +25,7 @@ classifiers = [
 dependencies = [
     "numpy>=1.21",
     "matplotlib>=3.5",
-    "invisensing>=1.0.0",
+    "invisensing>=1.1.0",
 ]
 
 [project.optional-dependencies]
@@ -37,8 +37,9 @@ test = ["pytest>=7"]
 audace-display = "audace_display.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/invisensing-io/Audace-rust"
-Source = "https://github.com/invisensing-io/Audace-rust"
+Homepage = "https://github.com/invisensing-io/audace-display"
+Source = "https://github.com/invisensing-io/audace-display"
+Issues = "https://github.com/invisensing-io/audace-display/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]

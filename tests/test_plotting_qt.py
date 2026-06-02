@@ -96,6 +96,10 @@ def test_build_animate_scope_qt():
     assert win is not None
 
 
+@pytest.mark.skipif(
+    not hasattr(__import__("invisensing").File, "seek_lines"),
+    reason="scope mode needs invisensing>=1.1.0 (seek_lines)",
+)
 def test_cli_scope_pyqtgraph(raw_dat, monkeypatch):
     _app_or_skip()
     from audace_display import cli, plotting_qt
