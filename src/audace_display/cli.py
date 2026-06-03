@@ -391,11 +391,33 @@ def do_scope(f, args) -> int:
     return 0
 
 
+def _inspect_source(f, args):
+    """Resolve the (transform, label, source_label, n_positions) for inspect.
+
+    With ``--script`` the signal is the demod plugin output (e.g. DUI phase);
+    otherwise a built-in channel. ``n_positions`` is read from the actual
+    transform output, which may differ from ``f.positions_per_line``.
+    """
+    if args.script:
+        from .demod import load_demodulator
+        plugin = load_demodulator(args.script, f)
+        probe = np.asarray(plugin.transform(f.read_lines(1)))
+        if probe.ndim != 2:
+            raise AudaceDisplayError(
+                f"the demod script must return a 2-D array, got {probe.shape}."
+            )
+        if hasattr(f, "seek_lines"):
+            f.seek_lines(0)
+        return plugin.transform, plugin.label, f"demod={args.script}", probe.shape[1]
+
+    canonical, resolver, label, _ = resolve_channel(args.channel, f.mode)
+    return _channel_transform(f, resolver), label, f"channel={canonical}", f.positions_per_line
+
+
 def do_inspect(f, args) -> int:
     """Single location: waveform + FFT spectrum stacked in one figure."""
-    canonical, resolver, label, _ = resolve_channel(args.channel, f.mode)
-    n_pos = f.positions_per_line
-    d_step = reader.position_step_m(f)
+    transform, label, source_label, n_pos = _inspect_source(f, args)
+    d_step = reader.position_step_m(f, n_pos)
 
     if args.index is not None:
         idx = args.index
@@ -410,7 +432,7 @@ def do_inspect(f, args) -> int:
         )
 
     data, eff_trig = reader.load_columns(
-        f, _channel_transform(f, resolver), [idx],
+        f, transform, [idx],
         start_time=args.start_time, duration=args.duration,
         subsample_time=args.subsample_time, max_pulses=args.max_pulses,
     )
@@ -439,7 +461,7 @@ def do_inspect(f, args) -> int:
         f"Max: {waveform.max():.6g}"
     )
     title = args.title or (
-        f"{f.path.name} -- {canonical}, location index {idx} ({idx * d_step:.2f} m)"
+        f"{f.path.name} -- {source_label}, location index {idx} ({idx * d_step:.2f} m)"
     )
 
     from . import plotting
@@ -717,6 +739,10 @@ Single location: one figure with the time waveform (top) and its FFT spectrum
 (bottom), for one location index / position. The waveform has its DC offset and
 a linear trend removed; the dominant FFT peak is annotated. Mirrors the
 standalone phase_diff_location_visualize script.
+
+Works on a built-in channel, or -- with --script -- on the output of a demod
+plugin (same contract as the 'demod' command): inspect one location of, e.g.,
+the DUI phase produced from an ArctanMagnitude file.
 """
 _INSPECT_EPILOG = """\
 Examples:
@@ -725,6 +751,9 @@ Examples:
   audace-display inspect acq.dat --index 120 --fft-log --fmax 200
   audace-display inspect acq.dat --index 120 --no-detrend --clip-percentile 0
   audace-display inspect acq.dat --index 120 --save loc120.png
+
+  # On a demod plugin output (DUI phase), one location:
+  audace-display inspect arctan_mag.dat --script plugins/dui_rust.py --index 120
 """
 
 
@@ -828,7 +857,11 @@ def build_parser() -> argparse.ArgumentParser:
                        help="One location: waveform + FFT spectrum in one figure.",
                        description=_INSPECT_DESC, epilog=_INSPECT_EPILOG)
     _add_io(p_ins)
-    p_ins.add_argument("--channel", "-c", default=None, help="Channel (default depends on mode).")
+    p_ins.add_argument("--channel", "-c", default=None,
+                       help="Channel (default depends on mode). Ignored with --script.")
+    p_ins.add_argument("--script", default=None,
+                       help="Demod script (same contract as 'demod'): inspect one "
+                            "location of the plugin output (e.g. DUI phase).")
     p_ins.add_argument("--start-time", type=float, default=None, help="Skip the first seconds.")
     p_ins.add_argument("--duration", type=float, default=None, help="Duration to read (s).")
     grp_ins = p_ins.add_mutually_exclusive_group()

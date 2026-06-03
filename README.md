@@ -107,6 +107,7 @@ audace-display fft   acquisition.dat --position-range 100:200 --window blackman
 audace-display trace acquisition.dat --position 100
 audace-display inspect acquisition.dat --index 120
 audace-display inspect acquisition.dat --position 60 --fft-log --fmax 200
+audace-display inspect arctan_mag.dat  --script plugins/dui_rust.py --index 120
 ```
 
 ## Channels per mode
