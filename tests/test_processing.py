@@ -32,6 +32,20 @@ def test_temporal_fft_locates_sinusoid_peak():
     assert peak_freq == pytest.approx(f0, abs=fs / n * 2)
 
 
+def test_temporal_fft_peak_reads_true_amplitude():
+    # On-bin tone (f0 = k·fs/n) so there is no scalloping loss: the single-sided
+    # amplitude spectrum must report the sinusoid's true amplitude A, not A/2.
+    fs = 1000.0
+    n = 2000
+    f0 = 50.0  # 50 = 100·1000/2000 -> exactly on bin 100
+    amplitude = 3.0
+    t = np.arange(n) / fs
+    sig = (amplitude * np.cos(2 * np.pi * f0 * t)).astype(np.float64)[:, None]
+    freqs, amp = processing.temporal_fft(sig, fs=fs, window="hann", detrend=True)
+    assert freqs[np.argmax(amp)] == pytest.approx(f0, abs=1e-6)
+    assert amp.max() == pytest.approx(amplitude, rel=2e-2)  # ~A, not A/2
+
+
 def test_temporal_fft_too_short():
     with pytest.raises(AudaceDisplayError):
         processing.temporal_fft(np.zeros((1, 4)), fs=1000.0, window="hann", detrend=False)

@@ -63,9 +63,20 @@ def temporal_fft(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Temporal FFT (axis 0 = time) over each column (position).
 
-    Returns ``(freqs_hz, amplitude)``. With several positions, amplitude =
-    *incoherent average* (mean of ``|FFT|^2`` then square root) -> preserves
-    peaks even out of phase. Normalized by the window's coherent gain.
+    Returns ``(freqs_hz, amplitude)`` as a **single-sided amplitude spectrum**
+    in the signal's own units: a sinusoid of amplitude ``A`` produces a peak of
+    height ``≈ A``. Two calibrations combine:
+
+    * ``/(n_rows·cg)`` — undoes the DFT length and the window's coherent gain
+      (``cg = mean(window)``) so the peak is independent of record length and
+      window choice;
+    * one-sided ``×2`` — a real tone splits its energy over ``±f`` and ``rfft``
+      keeps only ``+f``, so every positive-frequency bin reads half the true
+      amplitude. DC (bin 0) and, for even ``n_rows``, Nyquist (last bin) have no
+      mirror twin and are **not** doubled.
+
+    With several positions, amplitude = *incoherent average* (mean of
+    ``|FFT|^2`` then square root) -> preserves peaks even out of phase.
     """
     if data_2d.ndim == 1:
         data_2d = data_2d[:, None]
@@ -89,8 +100,15 @@ def temporal_fft(
         power = (np.abs(spec) ** 2).mean(axis=1)
         amp = np.sqrt(power)
 
+    # Calibrate to a single-sided amplitude spectrum (see docstring): coherent
+    # gain + length normalization, then ×2 on the positive-frequency bins
+    # except DC (bin 0) and — only for even n_rows — Nyquist (last bin).
     cg = float(win.mean()) or 1.0
-    amp = amp / (n_rows * cg)
+    onesided = np.full(amp.shape[0], 2.0, dtype=np.float64)
+    onesided[0] = 1.0
+    if n_rows % 2 == 0:
+        onesided[-1] = 1.0
+    amp = amp * onesided / (n_rows * cg)
     return freqs.astype(np.float32), amp.astype(np.float32)
 
 
