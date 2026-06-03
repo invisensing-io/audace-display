@@ -94,6 +94,47 @@ def temporal_fft(
     return freqs.astype(np.float32), amp.astype(np.float32)
 
 
+# --- 1-D signal conditioning -------------------------------------------------
+
+
+def remove_dc_and_trend(signal: np.ndarray, *, detrend: bool = True) -> np.ndarray:
+    """Remove the mean and (optionally) a linear trend from a 1-D signal.
+
+    Mirrors the conditioning applied before a single-location waveform/FFT: the
+    DC offset is always removed; with ``detrend`` a least-squares line is also
+    subtracted. NaNs are zeroed out so the plot and FFT stay finite.
+    """
+    sig = np.asarray(signal, dtype=np.float64)
+    sig = sig - np.nanmean(sig)
+    if detrend and sig.size > 1:
+        x = np.linspace(-1.0, 1.0, sig.size)
+        slope, intercept = np.polyfit(x, sig, deg=1)
+        sig = sig - (slope * x + intercept)
+    return np.nan_to_num(sig)
+
+
+def percentile_limits(
+    values: np.ndarray, percentile: Optional[float]
+) -> tuple[Optional[float], Optional[float]]:
+    """Symmetric percentile clip ``(vmin, vmax)`` for a y-axis, or ``(None, None)``.
+
+    ``percentile=99`` keeps the central 99 % of the finite samples. ``None``
+    disables clipping.
+    """
+    if percentile is None:
+        return None, None
+    if percentile <= 0 or percentile >= 100:
+        raise AudaceDisplayError("clip percentile must be between 0 and 100.")
+    finite = values[np.isfinite(values)]
+    if finite.size == 0:
+        return None, None
+    lower = (100.0 - percentile) / 2.0
+    vmin, vmax = np.percentile(finite, [lower, 100.0 - lower])
+    if abs(vmax - vmin) < 1e-12:
+        vmax = vmin + 1e-12
+    return float(vmin), float(vmax)
+
+
 # --- Positions ---------------------------------------------------------------
 
 

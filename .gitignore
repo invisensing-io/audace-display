@@ -14,3 +14,7 @@ htmlcov/
 # venvs
 .venv/
 venv/
+
+# Local-only demodulation plugins (proprietary demod math + Rust bindings).
+# Never published to PyPI nor committed to the repo -- see plugins/README.md.
+/plugins/

@@ -2,8 +2,8 @@
 
 Zero-config usage: ``audace-display FILE`` automatically picks a **heatmap**
 (demodulated file) or an **animated oscilloscope** (raw file). The
-``info`` / ``heatmap`` / ``fft`` / ``trace`` / ``scope`` / ``demod`` subcommands
-give fine-grained control.
+``info`` / ``heatmap`` / ``fft`` / ``trace`` / ``scope`` / ``inspect`` /
+``demod`` subcommands give fine-grained control.
 """
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ except Exception:  # pragma: no cover - version is informational only
 _FFT_MAX_CELLS = 256 * 1024 * 1024 // 4
 _FFT_MAX_POSITIONS = 256
 
-SUBCOMMANDS = {"auto", "info", "heatmap", "fft", "trace", "scope", "demod"}
+SUBCOMMANDS = {"auto", "info", "heatmap", "fft", "trace", "scope", "demod", "inspect"}
 
 
 def _warn(msg: str) -> None:
@@ -391,6 +391,68 @@ def do_scope(f, args) -> int:
     return 0
 
 
+def do_inspect(f, args) -> int:
+    """Single location: waveform + FFT spectrum stacked in one figure."""
+    canonical, resolver, label, _ = resolve_channel(args.channel, f.mode)
+    n_pos = f.positions_per_line
+    d_step = reader.position_step_m(f)
+
+    if args.index is not None:
+        idx = args.index
+    elif args.position is not None:
+        idx = int(round(args.position / d_step))
+    else:
+        idx = n_pos // 2
+    if not (0 <= idx < n_pos):
+        raise AudaceDisplayError(
+            f"location index {idx} outside the fiber "
+            f"(0 to {n_pos - 1}, i.e. 0 to {(n_pos - 1) * d_step:.2f} m)."
+        )
+
+    data, eff_trig = reader.load_columns(
+        f, _channel_transform(f, resolver), [idx],
+        start_time=args.start_time, duration=args.duration,
+        subsample_time=args.subsample_time, max_pulses=args.max_pulses,
+    )
+    if data.shape[0] < 2:
+        raise AudaceDisplayError("not enough pulses to inspect this location.")
+
+    detrend = not args.no_detrend
+    waveform = processing.remove_dc_and_trend(data[:, 0], detrend=detrend)
+    times = np.arange(waveform.size) / eff_trig
+
+    clip = None if args.clip_percentile == 0 else args.clip_percentile
+    ylim = processing.percentile_limits(waveform, clip)
+
+    freqs, magnitude = processing.temporal_fft(
+        waveform, fs=eff_trig, window=args.window, detrend=detrend
+    )
+
+    stats_text = (
+        f"Location index: {idx}\n"
+        f"Position: {idx * d_step:.2f} m\n"
+        f"Samples: {waveform.size}\n"
+        f"Rate: {eff_trig:g} Hz\n"
+        f"Mean: {waveform.mean():.6g}\n"
+        f"Std: {waveform.std():.6g}\n"
+        f"Min: {waveform.min():.6g}\n"
+        f"Max: {waveform.max():.6g}"
+    )
+    title = args.title or (
+        f"{f.path.name} -- {canonical}, location index {idx} ({idx * d_step:.2f} m)"
+    )
+
+    from . import plotting
+    fig = plotting.build_inspect(
+        times, waveform, freqs, magnitude,
+        y_label=label, ylim=ylim, stats_text=stats_text,
+        fft_y_label="Amplitude" + (" (log)" if args.fft_log else ""),
+        fft_log=args.fft_log, fmax=args.fmax, title=title,
+    )
+    plotting.show_or_save(fig, args.save, args.dpi)
+    return 0
+
+
 def do_auto(f, args) -> int:
     """Zero-config: heatmap if demodulated, animated oscilloscope if raw."""
     if f.mode is Mode.RAW:
@@ -486,7 +548,7 @@ Simplest form -- no subcommand needed:
     audace-display acq.dat                 # auto: heatmap or oscilloscope
     audace-display acq.dat --save out.png  # PNG export (headless mode)
 
-Subcommands for fine control: info, heatmap, fft, trace, scope, demod.
+Subcommands for fine control: info, heatmap, fft, trace, scope, inspect, demod.
 """
 
 _EPILOG = """\
@@ -511,6 +573,9 @@ Examples
 
   # 1-D time trace at one position (meters)
   audace-display trace acq.dat --position 100
+
+  # One location: waveform + FFT spectrum in a single figure
+  audace-display inspect acq.dat --index 120
 
   # Demodulation via an external script (no demod code shipped) -> heatmap
   audace-display demod raw.dat --script my_demod.py --save demod.png
@@ -647,6 +712,22 @@ def _subparser(sub, name: str, *, help: str, description: str, epilog: str):
     )
 
 
+_INSPECT_DESC = """\
+Single location: one figure with the time waveform (top) and its FFT spectrum
+(bottom), for one location index / position. The waveform has its DC offset and
+a linear trend removed; the dominant FFT peak is annotated. Mirrors the
+standalone phase_diff_location_visualize script.
+"""
+_INSPECT_EPILOG = """\
+Examples:
+  audace-display inspect acq.dat --index 120
+  audace-display inspect acq.dat --position 60 --duration 10
+  audace-display inspect acq.dat --index 120 --fft-log --fmax 200
+  audace-display inspect acq.dat --index 120 --no-detrend --clip-percentile 0
+  audace-display inspect acq.dat --index 120 --save loc120.png
+"""
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="audace-display",
@@ -741,6 +822,36 @@ def build_parser() -> argparse.ArgumentParser:
     _add_scope_opts(p_sc)
     _add_backend(p_sc)
     p_sc.set_defaults(func=lambda a: _open_and_run(do_scope, a))
+
+    # inspect (waveform + FFT for one location)
+    p_ins = _subparser(sub, "inspect",
+                       help="One location: waveform + FFT spectrum in one figure.",
+                       description=_INSPECT_DESC, epilog=_INSPECT_EPILOG)
+    _add_io(p_ins)
+    p_ins.add_argument("--channel", "-c", default=None, help="Channel (default depends on mode).")
+    p_ins.add_argument("--start-time", type=float, default=None, help="Skip the first seconds.")
+    p_ins.add_argument("--duration", type=float, default=None, help="Duration to read (s).")
+    grp_ins = p_ins.add_mutually_exclusive_group()
+    grp_ins.add_argument("--index", type=int, default=None, metavar="N",
+                         help="Location/column index (default: middle of the fiber).")
+    grp_ins.add_argument("--position", "-p", type=float, default=None, metavar="M",
+                         help="Position in meters (converted to the nearest index).")
+    p_ins.add_argument("--subsample-time", type=int, default=1,
+                       help="Keep only one pulse out of N (default 1).")
+    p_ins.add_argument("--max-pulses", type=int, default=None,
+                       help="Limit the number of pulses read (default: whole file).")
+    p_ins.add_argument("--no-detrend", action="store_true",
+                       help="Only remove DC, keep the linear trend.")
+    p_ins.add_argument("--clip-percentile", type=float, default=99.0,
+                       help="Waveform y-axis percentile clip (default 99; 0 disables).")
+    p_ins.add_argument("--window", default="hann",
+                       choices=["rect", "hann", "hamming", "blackman"],
+                       help="FFT time window (default hann).")
+    p_ins.add_argument("--fmax", type=float, default=None,
+                       help="Limit the FFT frequency axis (Hz). Default Nyquist.")
+    p_ins.add_argument("--fft-log", action="store_true",
+                       help="Logarithmic FFT magnitude axis.")
+    p_ins.set_defaults(func=lambda a: _open_and_run(do_inspect, a))
 
     # demod (external plugin)
     p_dem = _subparser(sub, "demod",

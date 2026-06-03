@@ -100,6 +100,66 @@ def build_line(x: np.ndarray, y: np.ndarray, *, x_label: str, y_label: str, titl
     return fig
 
 
+def build_inspect(
+    times: np.ndarray,
+    waveform: np.ndarray,
+    freqs: np.ndarray,
+    magnitude: np.ndarray,
+    *,
+    y_label: str,
+    ylim: tuple[Optional[float], Optional[float]],
+    stats_text: str,
+    fft_y_label: str,
+    fft_log: bool,
+    fmax: Optional[float],
+    title: str,
+):
+    """Single-location inspection: waveform (top) + FFT spectrum (bottom).
+
+    ``ylim`` is an optional ``(vmin, vmax)`` percentile clip for the waveform.
+    The dominant FFT peak (over ``freqs > 0``, within ``fmax``) is annotated.
+    """
+    fig, (ax_wave, ax_fft) = plt.subplots(2, 1, figsize=(13, 8))
+
+    ax_wave.plot(times, waveform, linewidth=0.8, color="tab:blue")
+    if ylim[0] is not None and ylim[1] is not None:
+        ax_wave.set_ylim(ylim[0], ylim[1])
+    ax_wave.set_xlabel("Time from selected start (s)")
+    ax_wave.set_ylabel(y_label)
+    ax_wave.set_title(title)
+    ax_wave.grid(True, alpha=0.3)
+    ax_wave.text(
+        0.01, 0.98, stats_text, transform=ax_wave.transAxes, va="top",
+        bbox={"boxstyle": "round", "facecolor": "white", "alpha": 0.85},
+    )
+
+    mask = freqs > 0
+    if fmax is not None:
+        mask &= freqs <= fmax
+    if magnitude.size and np.any(mask):
+        f_m, m_m = freqs[mask], magnitude[mask]
+        ax_fft.plot(f_m, m_m, linewidth=0.8, color="tab:purple")
+        ax_fft.set_xlabel("Frequency (Hz)")
+        ax_fft.set_ylabel(fft_y_label)
+        ax_fft.set_title("FFT spectrum")
+        ax_fft.grid(True, alpha=0.3, which="both" if fft_log else "major")
+        if fft_log:
+            ax_fft.set_yscale("log")
+        peak = int(np.argmax(m_m))
+        ax_fft.axvline(f_m[peak], color="tab:red", linestyle="--", linewidth=0.8)
+        ax_fft.annotate(
+            f"{f_m[peak]:.2f} Hz", xy=(f_m[peak], m_m[peak]),
+            xytext=(8, 8), textcoords="offset points",
+        )
+    else:
+        ax_fft.text(0.5, 0.5, "FFT unavailable: signal too short",
+                    ha="center", va="center", transform=ax_fft.transAxes)
+        ax_fft.set_axis_off()
+
+    fig.tight_layout()
+    return fig
+
+
 # Keep the FuncAnimation objects alive: otherwise the GC stops them immediately.
 _ANIMATIONS: list = []
 

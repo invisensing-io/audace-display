@@ -93,6 +93,7 @@ Requires `invisensing >= 1.1.0` (O(1) per-line seek).
 | `scope`   | Oscilloscope: replays the lines (pulses) in real time, looping |
 | `fft`     | Temporal spectrum (FFT along the pulses) at 1+ position(s) |
 | `trace`   | 1-D time trace at one position |
+| `inspect` | One location: time waveform + FFT spectrum in a single figure |
 | `demod`   | Demodulate via an **external script**, then show as heatmap |
 
 ```bash
@@ -104,6 +105,8 @@ audace-display fft   acquisition.dat --position 120
 audace-display fft   acquisition.dat --position 50,100,150 --db
 audace-display fft   acquisition.dat --position-range 100:200 --window blackman
 audace-display trace acquisition.dat --position 100
+audace-display inspect acquisition.dat --index 120
+audace-display inspect acquisition.dat --position 60 --fft-log --fmax 200
 ```
 
 ## Channels per mode
@@ -139,33 +142,71 @@ and aggregated on the fly into a `--max-time-bins x --max-space-bins` grid
 
 ## Demodulation via external plugin
 
-`audace-display` contains **no demodulation code**: it defines a contract and
-loads a Python script that **you** provide (never published). The result is
-displayed as a heatmap.
+`audace-display` contains **no demodulation code**: it defines an **API
+contract** and loads a Python script that **you** provide (never published). The
+result is displayed as a heatmap. This keeps the published package generic and
+safe — your (often proprietary) signal-processing recipe never leaves your
+machine.
+
+Your script defines **either** a stateless `demodulate` function **or** a
+stateful `Demodulator` class. Both turn a raw pulse chunk `(rows, line_size)`
+into a `(rows, positions)` field:
 
 ```python
-# my_demod.py
+# my_demod.py  --  stateless function (memoryless transforms)
 import numpy as np
 
+OUTPUT_LABEL = "magnitude (V)"   # colorbar label (optional)
+IS_ANGULAR   = False             # diverging colormap centered on 0 (optional)
+
+def demodulate(chunk, *, sample_rate, trig_frequency, line_size, meta):
+    # interleaved I/Q raw -> |IQ|
+    i = chunk[:, 0::2].astype(np.float32)
+    q = chunk[:, 1::2].astype(np.float32)
+    return np.sqrt(i * i + q * q)
+```
+
+```python
+# my_demod.py  --  stateful class (filters with temporal memory)
 class Demodulator:
-    OUTPUT_LABEL = "phase (rad)"   # colorbar label (optional)
-    IS_ANGULAR   = True            # diverging colormap (optional)
+    OUTPUT_LABEL = "phase (rad)"
+    IS_ANGULAR   = True
 
     def __init__(self, *, sample_rate, trig_frequency, line_size, meta):
-        ...                        # init filters / state
+        ...                        # build filters / allocate state
 
-    def process(self, chunk):      # called on contiguous time chunks
+    def process(self, chunk):      # called on contiguous time chunks, in order
         # chunk: (rows, line_size) raw -> (rows, positions) float32
         ...
 ```
 
 ```bash
 audace-display demod raw.dat --script my_demod.py --save demod.png
+audace-display demod raw.dat --script my_demod.py --db --start-distance 50 --end-distance 200
 ```
 
-Stateless alternative: a function
-`demodulate(chunk, *, sample_rate, trig_frequency, line_size, meta) -> ndarray`.
-Chunks arrive **in time order** (compatible with stateful filters).
+**The contract in short:**
+
+- **Input** `chunk`: the buffer from `invisensing.File.read_lines`, shape
+  `(rows, line_size)`, in the **file's native dtype** (`int16`/`int32`/`float32`).
+  For interleaved I/Q, `chunk[:, 0::2]` is I and `chunk[:, 1::2]` is Q. *Cast to
+  float before arithmetic — integer dtypes overflow silently.*
+- **kwargs** (keyword-only, all optional — declare only what you use):
+  `sample_rate` (intra-pulse Hz), `trig_frequency` (pulse rate Hz), `line_size`,
+  and `meta` (full header dict: `positions_per_line`, `range_v`, `flags`,
+  `mode`, `num_lines`, …).
+- **Output**: a 2-D `(rows, positions)` array — `rows` **must** match the input
+  (don't resample time), `positions` **constant** across chunks. Cast to
+  `float32` for display.
+- **Streaming guarantees**: chunks arrive **in time order, contiguous, same
+  `positions`** → a stateful filter (IIR, running mean, phase unwrap) is safe in
+  the *class* form (state on `self`). The *function* form sees each chunk
+  independently (state resets per chunk) — use it only for memoryless math.
+
+📖 **Full guide with worked examples** (I/Q magnitude, instantaneous phase,
+stateful IIR low-pass), the complete `meta` reference, the pipeline diagram, how
+to test a plugin, and FAQ:
+[docs/DEMOD_PLUGIN.md](https://github.com/invisensing-io/audace-display/blob/main/docs/DEMOD_PLUGIN.md).
 
 ## Programmatic API
 
