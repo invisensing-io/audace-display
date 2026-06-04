@@ -6,7 +6,7 @@ Visualization of **Audace DAS** acquisition files -- simple, fast, safe.
 (`.dat`, `.hdf5`, `.tdms`, `.sgy`) via the [`invisensing`](https://pypi.org/project/invisensing/)
 library, automatically detects the file mode, and shows:
 
-- a **heatmap** (time x distance waterfall) for **demodulated** files,
+- a **heatmap** (distance x time waterfall) for **demodulated** files,
 - an **animated oscilloscope** (lines replayed in real time, looping) for **raw**
   files.
 
@@ -89,7 +89,7 @@ Requires `invisensing >= 1.1.0` (O(1) per-line seek).
 |-----------|------|
 | *(none)*  | Auto: heatmap (demodulated) or animated oscilloscope (raw) |
 | `info`    | Header metadata + stats of the default channel |
-| `heatmap` | Time x distance waterfall, color = channel |
+| `heatmap` | Distance x time waterfall, color = channel |
 | `scope`   | Oscilloscope: replays the lines (pulses) in real time, looping |
 | `fft`     | Temporal spectrum (FFT along the pulses) at 1+ position(s) |
 | `trace`   | 1-D time trace at one position |
@@ -132,8 +132,8 @@ and aggregated on the fly into a `--max-time-bins x --max-space-bins` grid
 
 | Option | Effect |
 |--------|--------|
-| `--max-time-bins N`  | Temporal (X) resolution of the waterfall. Default 2000 |
-| `--max-space-bins N` | Spatial (Y) resolution of the waterfall. Default 2000 |
+| `--max-time-bins N`  | Temporal (Y) resolution of the waterfall. Default 2000 |
+| `--max-space-bins N` | Spatial (X) resolution of the waterfall. Default 2000 |
 | `--reduce {mean,rms,std,peak}` | Temporal aggregation statistic. Default `mean` |
 | `--max-pulses N`     | Bound the number of pulses read (default: whole file) |
 | `--subsample-time N` | (fft/trace) keep only one pulse out of N |

@@ -39,16 +39,17 @@ def build_heatmap(
     aspect: str,
     title: str,
 ):
-    """Waterfall: X = time (s), Y = distance (m), color = ``data``.
+    """Waterfall: X = distance (m), Y = time (s), color = ``data``.
 
-    ``data`` is ``(n_time, n_space)`` -- its transpose is displayed.
+    ``data`` is ``(n_time, n_space)`` -- displayed as-is, so ``imshow`` maps
+    axis 0 (time) to Y and axis 1 (distance) to X.
     """
     fig, ax = plt.subplots(figsize=(12, 6))
     im = ax.imshow(
-        data.T,
+        data,
         aspect=aspect,
         origin="lower",
-        extent=[t_extent[0], t_extent[1], d_extent[0], d_extent[1]],
+        extent=[d_extent[0], d_extent[1], t_extent[0], t_extent[1]],
         cmap=cmap,
         vmin=vmin,
         vmax=vmax,
@@ -56,8 +57,8 @@ def build_heatmap(
     )
     cbar = fig.colorbar(im, ax=ax)
     cbar.set_label(label)
-    ax.set_xlabel("Time (s)")
-    ax.set_ylabel("Distance (m)")
+    ax.set_xlabel("Distance (m)")
+    ax.set_ylabel("Time (s)")
     ax.set_title(title)
     fig.tight_layout()
     return fig

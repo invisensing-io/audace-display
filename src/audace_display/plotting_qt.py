@@ -68,9 +68,10 @@ def build_heatmap(
     cmap: str,
     title: str,
 ):
-    """Interactive waterfall: X = time (s), Y = distance (m), color = ``data``.
+    """Interactive waterfall: X = distance (m), Y = time (s), color = ``data``.
 
-    ``data`` is ``(n_time, n_space)`` -- ImageItem maps axis 0 -> X, axis 1 -> Y.
+    ``data`` is ``(n_time, n_space)``; displayed transposed so ImageItem maps
+    axis 0 (distance) -> X and axis 1 (time) -> Y.
     """
     pg, QtWidgets, QtGui = require_pyqtgraph()
     _ensure_app()
@@ -80,17 +81,17 @@ def build_heatmap(
     win.setWindowTitle(title)
     plot = win.addPlot()
     plot.setTitle(title)
-    plot.setLabel("bottom", "Time (s)")
-    plot.setLabel("left", "Distance (m)")
+    plot.setLabel("bottom", "Distance (m)")
+    plot.setLabel("left", "Time (s)")
 
     img = pg.ImageItem()
-    img.setImage(data, levels=(vmin, vmax))
+    img.setImage(data.T, levels=(vmin, vmax))
     nt, nd = data.shape
     t0, t1 = t_extent
     d0, d1 = d_extent
     tr = QtGui.QTransform()
-    tr.translate(t0, d0)
-    tr.scale((t1 - t0) / max(nt, 1), (d1 - d0) / max(nd, 1))
+    tr.translate(d0, t0)
+    tr.scale((d1 - d0) / max(nd, 1), (t1 - t0) / max(nt, 1))
     img.setTransform(tr)
     plot.addItem(img)
 

@@ -3,7 +3,7 @@
 Reads any format produced by the Filewriter (``.dat`` / ``.hdf5`` / ``.tdms`` /
 ``.sgy``) via the :mod:`invisensing` library, and shows:
 
-- a **heatmap** (time x distance waterfall) for demodulated files,
+- a **heatmap** (distance x time waterfall) for demodulated files,
 - an **animated oscilloscope** for raw files,
 
 with automatic mode detection. *Streaming* decimation to handle multi-GB files
@@ -29,7 +29,7 @@ from .reader import (
 )
 from .demod import load_demodulator, DemodPlugin
 
-__version__ = "0.2.1"
+__version__ = "0.3.1"
 
 __all__ = [
     "AudaceDisplayError",

@@ -563,7 +563,7 @@ audace-display -- visualization of Audace DAS acquisition files.
 
 Reads any file produced by the Filewriter (.dat / .hdf5 / .tdms / .sgy) via the
 "invisensing" library, auto-detects the mode, and shows:
-    demodulated file  ->  heatmap (time x distance waterfall)
+    demodulated file  ->  heatmap (distance x time waterfall)
     raw file          ->  animated oscilloscope (lines in real time, looping)
 
 Simplest form -- no subcommand needed:
@@ -660,7 +660,7 @@ Example:
 """
 
 _HEATMAP_DESC = """\
-Time x distance waterfall: X = time, Y = distance along the fiber, color =
+Distance x time waterfall: X = distance along the fiber, Y = time, color =
 channel. Streamed and decimated to screen resolution.
 """
 _HEATMAP_EPILOG = """\
@@ -792,7 +792,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # heatmap
     p_heat = _subparser(sub, "heatmap",
-                        help="Time x distance waterfall.",
+                        help="Distance x time waterfall.",
                         description=_HEATMAP_DESC, epilog=_HEATMAP_EPILOG)
     _add_io(p_heat)
     p_heat.add_argument("--channel", "-c", default=None, help="Channel (default depends on mode).")
