@@ -121,11 +121,18 @@ def _validate_output(out, raw: np.ndarray, source: str) -> np.ndarray:
     return arr.astype(np.float32, copy=False)
 
 
-def load_demodulator(script_path: str | Path, f) -> DemodPlugin:
+def load_demodulator(script_path: str | Path, f, plugin_args=None) -> DemodPlugin:
     """Import ``script_path`` and build a :class:`DemodPlugin`.
 
     Detects ``Demodulator`` (preferred) or ``demodulate``. Validates the output
     on each call. Raises :class:`AudaceDisplayError` on any problem.
+
+    ``plugin_args`` is the list of extra command-line arguments the CLI did not
+    recognise (everything after the known flags of ``demod`` / ``inspect``).
+    audace-display forwards them verbatim to the plugin — it does not interpret
+    them — so a plugin can be configured per-invocation without environment
+    variables (e.g. ``--script mozart.py --heterodyne 20000``). It reaches a
+    plugin only if its signature accepts a ``plugin_args`` keyword.
     """
     path = Path(script_path)
     if not path.is_file():
@@ -146,6 +153,7 @@ def load_demodulator(script_path: str | Path, f) -> DemodPlugin:
         "trig_frequency": f.trig_frequency,
         "line_size": f.line_size,
         "meta": meta,
+        "plugin_args": list(plugin_args or []),
     }
     src = str(path)
 

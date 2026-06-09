@@ -180,7 +180,7 @@ def do_heatmap(f, args) -> int:
 
 def do_demod(f, args) -> int:
     from .demod import load_demodulator
-    plugin = load_demodulator(args.script, f)
+    plugin = load_demodulator(args.script, f, getattr(args, "plugin_args", None))
     _render_heatmap(
         f, args, plugin.transform, plugin.label, plugin.is_angular,
         subtitle=f"demod={args.script}",
@@ -400,7 +400,7 @@ def _inspect_source(f, args):
     """
     if args.script:
         from .demod import load_demodulator
-        plugin = load_demodulator(args.script, f)
+        plugin = load_demodulator(args.script, f, getattr(args, "plugin_args", None))
         probe = np.asarray(plugin.transform(f.read_lines(1)))
         if probe.ndim != 2:
             raise AudaceDisplayError(
@@ -884,7 +884,7 @@ def build_parser() -> argparse.ArgumentParser:
                        help="Limit the FFT frequency axis (Hz). Default Nyquist.")
     p_ins.add_argument("--fft-log", action="store_true",
                        help="Logarithmic FFT magnitude axis.")
-    p_ins.set_defaults(func=lambda a: _open_and_run(do_inspect, a))
+    p_ins.set_defaults(func=lambda a: _open_and_run(do_inspect, a), _accepts_plugin_args=True)
 
     # demod (external plugin)
     p_dem = _subparser(sub, "demod",
@@ -897,7 +897,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_decim(p_dem)
     _add_heatmap_style(p_dem)
     _add_backend(p_dem)
-    p_dem.set_defaults(func=lambda a: _open_and_run(do_demod, a))
+    p_dem.set_defaults(func=lambda a: _open_and_run(do_demod, a), _accepts_plugin_args=True)
 
     return p
 
@@ -909,7 +909,18 @@ def main(argv: Optional[list[str]] = None) -> int:
         raw_argv = ["auto"] + raw_argv
 
     parser = build_parser()
-    args = parser.parse_args(raw_argv)
+    # Subcommands that take a demod plugin (`demod`, `inspect --script`) forward
+    # any unrecognised flags to the plugin, so it can be configured on the
+    # command line (e.g. `--script mozart.py --heterodyne 20000`) without env
+    # vars. Every other case keeps argparse's strict "unrecognized arguments".
+    args, unknown = parser.parse_known_args(raw_argv)
+    if unknown:
+        if getattr(args, "_accepts_plugin_args", False) and getattr(args, "script", None):
+            args.plugin_args = unknown
+        else:
+            parser.error("unrecognized arguments: " + " ".join(unknown))
+    else:
+        args.plugin_args = []
     if not getattr(args, "func", None):
         parser.print_help()
         return 2

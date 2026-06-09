@@ -42,6 +42,19 @@ NO_ENTRY_PLUGIN = '''
 x = 1
 '''
 
+# Declares `plugin_args`: receives the args the CLI forwarded (e.g. from
+# `demod … --scale 3`). Scales its output by a parsed value.
+PLUGIN_ARGS_PLUGIN = '''
+import numpy as np
+class Demodulator:
+    OUTPUT_LABEL = "scaled"
+    def __init__(self, *, line_size, plugin_args=None, **kw):
+        a = list(plugin_args or [])
+        self.scale = float(a[a.index("--scale") + 1]) if "--scale" in a else 1.0
+    def process(self, chunk):
+        return chunk[:, 0::2].astype(np.float32) * self.scale
+'''
+
 
 def _write(tmp_path, name, content):
     p = tmp_path / name
@@ -70,6 +83,21 @@ def test_class_plugin_streams_in_order(tmp_path, iq_dat):
         assert plugin.is_angular is True
         res = reader.load_decimated(f, plugin.transform, max_time_bins=20, max_space_bins=16)
         assert res.data.shape[0] <= 20
+
+
+def test_plugin_args_forwarded(tmp_path, iq_dat):
+    """Extra CLI args are forwarded to a plugin that declares ``plugin_args``;
+    plugins that don't declare it are unaffected (kwarg filtered out)."""
+    args_script = _write(tmp_path, "args_demod.py", PLUGIN_ARGS_PLUGIN)
+    class_script = _write(tmp_path, "class_demod.py", CLASS_PLUGIN)
+    with File(str(iq_dat)) as f:
+        raw = f.read_lines(8)
+        base = load_demodulator(args_script, f, None).transform(raw)
+        scaled = load_demodulator(args_script, f, ["--scale", "3"]).transform(raw)
+        # A plugin without a `plugin_args` param still loads when args are passed.
+        legacy = load_demodulator(class_script, f, ["--scale", "3"]).transform(raw)
+    np.testing.assert_allclose(scaled, base * 3.0, rtol=1e-6)
+    np.testing.assert_allclose(legacy, base, rtol=1e-6)
 
 
 def test_bad_output_shape(tmp_path, iq_dat):
