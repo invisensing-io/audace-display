@@ -186,6 +186,16 @@ audace-display demod raw.dat --script my_demod.py --save demod.png
 audace-display demod raw.dat --script my_demod.py --db --start-distance 50 --end-distance 200
 ```
 
+Any flag the CLI doesn't recognise is **forwarded to the plugin** (if it declares
+a `plugin_args` keyword), so a plugin can be configured per-invocation without
+environment variables — `demod` and `inspect --script` only:
+
+```bash
+audace-display demod raw.dat --script my_demod.py --gain 2.5 --mode fast
+```
+
+See [`docs/DEMOD_PLUGIN.md`](docs/DEMOD_PLUGIN.md#per-invocation-options-plugin_args).
+
 **The contract in short:**
 
 - **Input** `chunk`: the buffer from `invisensing.File.read_lines`, shape

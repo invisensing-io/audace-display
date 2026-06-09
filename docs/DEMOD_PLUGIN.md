@@ -117,6 +117,7 @@ the **same keyword-only** arguments:
 | `trig_frequency` | int   | Pulse repetition rate (Hz) — the *inter-pulse* (slow-time / temporal) rate, i.e. one row per `1/trig_frequency` s |
 | `line_size`      | int   | Samples per pulse (the width of `chunk`) |
 | `meta`           | dict  | Full header metadata (see below) |
+| `plugin_args`    | list[str] | Extra command-line args the CLI didn't recognise, forwarded verbatim (see [Per-invocation options](#per-invocation-options-plugin_args)) |
 
 You only need to declare the ones you use — the loader **filters kwargs to
 match your signature**. All of these are valid:
@@ -130,6 +131,39 @@ def demodulate(chunk): ...                               # no kwargs at all
 
 The same holds for `Demodulator.__init__`. `Demodulator.process(self, chunk)`
 takes **only** the chunk — bind everything else in `__init__`.
+
+---
+
+## Per-invocation options (`plugin_args`)
+
+`demod` and `inspect --script` forward any flags they **don't recognise**
+straight to your plugin, so it can be configured on the command line without
+environment variables. Declare a `plugin_args` keyword and parse it yourself —
+audace-display never interprets these flags, it only passes them through:
+
+```bash
+audace-display demod raw.dat --script my_demod.py --gain 2.5 --mode fast
+```
+
+```python
+import argparse
+import numpy as np
+
+class Demodulator:
+    def __init__(self, *, line_size, plugin_args=None, **kw):
+        p = argparse.ArgumentParser(add_help=False)
+        p.add_argument("--gain", type=float, default=1.0)
+        p.add_argument("--mode", default="normal")
+        self.opts, _unknown = p.parse_known_args(plugin_args or [])
+
+    def process(self, chunk):
+        return chunk[:, 0::2].astype(np.float32) * self.opts.gain
+```
+
+Plugins that don't declare `plugin_args` are unaffected — the kwarg is filtered
+out, and any extra flags are simply ignored for that plugin. (Subcommands
+*without* a `--script`, like `heatmap`, keep argparse's strict
+"unrecognized arguments" error.)
 
 ---
 
