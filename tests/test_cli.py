@@ -79,6 +79,14 @@ def test_bandheatmaps_single_band(iq_dat, tmp_path):
     assert _png_nonempty(out)
 
 
+def test_bandheatmaps_no_detrend(phase_dat, tmp_path):
+    out = tmp_path / "band_raw.png"
+    rc = main(["bandheatmaps", str(phase_dat),
+               "--f1", "100", "--f2", "200", "--no-detrend", "--save", str(out)])
+    assert rc == 0
+    assert _png_nonempty(out)
+
+
 def test_bandheatmaps_requires_f1(phase_dat, capsys):
     rc = main(["bandheatmaps", str(phase_dat), "--f2", "200"])
     assert rc == 1

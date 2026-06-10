@@ -78,6 +78,42 @@ def test_band_limited_lowband_keeps_dc():
     assert np.allclose(dropped, 0.0, atol=1e-4)  # f_lo > 0 removes DC
 
 
+def test_detrend_columns_removes_mean_and_linear_trend():
+    n = 500
+    x = np.linspace(-1, 1, n)
+    # column 0: pure affine (should vanish); column 1: affine + sine (sine kept)
+    col0 = 80.0 + 12.0 * x
+    col1 = 5.0 - 3.0 * x + np.sin(2 * np.pi * 7 * np.arange(n) / n)
+    m = np.stack([col0, col1], axis=1).astype(np.float32)
+    out = processing.detrend_columns(m)
+    assert np.allclose(out[:, 0], 0.0, atol=1e-4)          # affine fully removed
+    assert out[:, 1].mean() == pytest.approx(0.0, abs=1e-4)  # mean removed
+    # the 7-cycle sinusoid survives detrending (amplitude ~1 preserved)
+    assert np.sqrt(np.mean(out[:, 1] ** 2)) == pytest.approx(1 / np.sqrt(2), rel=0.05)
+
+
+def test_detrend_then_band_limited_removes_edge_ringing():
+    # Regression: a demodulated-like column (DC + drift + a mid-record HF burst)
+    # must not leak ringing into an otherwise-empty band once detrended.
+    fs, n = 1000.0, 2000
+    t = np.arange(n) / fs
+    sig = (80.0 + 12.0 * t).astype(np.float64)
+    sig[800:1200] += np.sin(2 * np.pi * 300 * t[800:1200])
+    col = sig[:, None]
+
+    raw_hi = processing.band_limited(col, fs=fs, f_lo=200.0, f_hi=500.0)[:, 0]
+    det_hi = processing.band_limited(
+        processing.detrend_columns(col), fs=fs, f_lo=200.0, f_hi=500.0)[:, 0]
+
+    outside = np.r_[raw_hi[:750], raw_hi[1250:]]
+    outside_det = np.r_[det_hi[:750], det_hi[1250:]]
+    # raw leaks a large spurious spike at the time edges; detrend kills it...
+    assert np.max(np.abs(outside)) > 1.0
+    assert np.max(np.abs(outside_det)) < 0.05
+    # ...while the genuine in-band burst is preserved
+    assert np.sqrt(np.mean(det_hi[800:1200] ** 2)) == pytest.approx(1 / np.sqrt(2), rel=0.05)
+
+
 def test_to_log_variance_is_log10_and_floors_zeros():
     var = np.array([[1.0, 100.0, 0.0]], dtype=np.float32)
     out = processing.to_log_variance(var)

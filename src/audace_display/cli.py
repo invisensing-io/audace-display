@@ -328,9 +328,13 @@ def do_bandheatmaps(f, args) -> int:
         panels.append(_panel(
             g_data, title="global (mean)", label=base_label, angular=is_ang))
 
-    # One panel per band: energy of the band-passed signal.
+    # One panel per band: energy of the band-passed signal. Detrend each
+    # position first (default): a demodulated channel carries a DC offset + slow
+    # drift whose start/end discontinuity would otherwise leak broadband ringing
+    # into every band (use --no-detrend to keep the raw signal, incl. DC).
+    band_source = matrix if args.no_detrend else processing.detrend_columns(matrix)
     for f_lo, f_hi in bands:
-        band_sig = processing.band_limited(matrix, fs=trig, f_lo=f_lo, f_hi=f_hi)
+        band_sig = processing.band_limited(band_source, fs=trig, f_lo=f_lo, f_hi=f_hi)
         b_data = _bin_time(band_sig, "variance" if variance else "rms")
         if variance == "log":
             b_data = processing.to_log_variance(b_data)
@@ -866,6 +870,10 @@ Bands are defined by their upper edges --f1 < --f2 < --f3 (only --f1 is
 required): [f0, f1), [f1, f2), [f2, f3). --f0 (default 0, i.e. keep DC) sets the
 lower edge of the first band, e.g. --f0 100 drops everything below 100 Hz.
 
+Each position is detrended (mean + linear trend removed) before the FFT so the
+DC offset / slow drift of a demodulated channel does not leak broadband ringing
+into the bands; pass --no-detrend to keep the raw signal (incl. DC).
+
 The full time series is held in RAM for the FFT: restrict big files with
 --duration / --max-pulses / --max-space-bins.
 """
@@ -1030,6 +1038,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Upper edge of band 2 (Hz). Optional.")
     p_band.add_argument("--f3", type=float, default=None, metavar="HZ",
                         help="Upper edge of band 3 (Hz). Optional.")
+    p_band.add_argument("--no-detrend", action="store_true",
+                        help="Keep the raw signal (incl. DC) before the band FFT. "
+                             "By default each position is detrended (mean + linear "
+                             "trend removed) to avoid edge-ringing artifacts.")
     p_band.add_argument("--cmap", default=None, help="matplotlib colormap (default auto).")
     _add_variance_opt(p_band)
     _add_backend(p_band)

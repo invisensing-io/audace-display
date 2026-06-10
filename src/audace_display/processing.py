@@ -44,6 +44,27 @@ def to_log_variance(var: np.ndarray) -> np.ndarray:
     return np.log10(np.maximum(var, floor)).astype(np.float32)
 
 
+def detrend_columns(matrix: np.ndarray) -> np.ndarray:
+    """Remove the mean and a least-squares linear trend from each column (time).
+
+    Vectorized 2-D counterpart of :func:`remove_dc_and_trend`, applied before the
+    band-pass FFT in ``bandheatmaps``. A demodulated channel usually carries a
+    large DC offset and slow drift; since the FFT treats each column as periodic,
+    the resulting start/end discontinuity would otherwise leak broadband energy
+    (edge ringing) into *every* band. Removing the affine part makes the column
+    near-periodic, so each band only keeps its own content.
+    """
+    m = np.asarray(matrix, dtype=np.float64)
+    n = m.shape[0]
+    if n < 2:
+        return np.nan_to_num(m - m.mean(axis=0, keepdims=True)).astype(np.float32)
+    x = np.linspace(-1.0, 1.0, n)  # symmetric grid -> mean(x) = 0
+    slope = (x[:, None] * m).sum(axis=0) / float((x * x).sum())
+    intercept = m.mean(axis=0)
+    out = m - (slope[None, :] * x[:, None] + intercept[None, :])
+    return np.nan_to_num(out).astype(np.float32)
+
+
 def band_limited(matrix: np.ndarray, *, fs: float, f_lo: float, f_hi: float) -> np.ndarray:
     """Brick-wall band-pass of ``matrix`` along axis 0 (time) via the FFT.
 
