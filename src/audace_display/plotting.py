@@ -5,6 +5,7 @@ server): PNG export via ``--save`` works without X11/Wayland.
 """
 from __future__ import annotations
 
+import math
 import os
 from typing import Optional, Sequence
 
@@ -60,6 +61,49 @@ def build_heatmap(
     ax.set_xlabel("Distance (m)")
     ax.set_ylabel("Time (s)")
     ax.set_title(title)
+    fig.tight_layout()
+    return fig
+
+
+def build_band_heatmaps(
+    panels: Sequence[dict],
+    *,
+    t_extent: tuple[float, float],
+    d_extent: tuple[float, float],
+    suptitle: str,
+):
+    """Grid of waterfalls: one global panel + one per frequency band.
+
+    Each ``panel`` is a dict with ``data`` ``(n_time, n_space)``, ``title``,
+    ``label`` (colorbar), ``vmin``, ``vmax`` and ``cmap``. Every panel shares the
+    distance/time axes but carries its own colorbar (the statistics differ).
+    """
+    n = len(panels)
+    ncols = 1 if n == 1 else (2 if n <= 4 else 3)
+    nrows = math.ceil(n / ncols)
+    fig, axes = plt.subplots(
+        nrows, ncols, figsize=(7 * ncols, 4.5 * nrows), squeeze=False
+    )
+    flat = axes.ravel()
+    for ax, panel in zip(flat, panels):
+        im = ax.imshow(
+            panel["data"],
+            aspect="auto",
+            origin="lower",
+            extent=[d_extent[0], d_extent[1], t_extent[0], t_extent[1]],
+            cmap=panel["cmap"],
+            vmin=panel["vmin"],
+            vmax=panel["vmax"],
+            interpolation="nearest",
+        )
+        cbar = fig.colorbar(im, ax=ax)
+        cbar.set_label(panel["label"])
+        ax.set_xlabel("Distance (m)")
+        ax.set_ylabel("Time (s)")
+        ax.set_title(panel["title"])
+    for ax in flat[n:]:  # hide unused cells of the grid
+        ax.set_axis_off()
+    fig.suptitle(suptitle)
     fig.tight_layout()
     return fig
 

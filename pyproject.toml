@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "audace-display"
-version = "0.4.0"
+version = "0.5.0"
 description = "Visualization of Audace DAS acquisition files (.dat / .hdf5 / .tdms / .sgy)."
 readme = "README.md"
 requires-python = ">=3.10"

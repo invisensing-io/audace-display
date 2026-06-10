@@ -37,6 +37,60 @@ def test_explicit_heatmap_db(arctan_dat, tmp_path):
     assert _png_nonempty(out)
 
 
+@pytest.mark.parametrize("mode", ["linear", "log"])
+def test_heatmap_variance(phase_dat, tmp_path, mode):
+    out = tmp_path / f"var_{mode}.png"
+    rc = main(["heatmap", str(phase_dat), "--variance", mode, "--save", str(out)])
+    assert rc == 0
+    assert _png_nonempty(out)
+
+
+def test_auto_variance_on_demod_file(iq_dat, tmp_path):
+    out = tmp_path / "auto_var.png"
+    rc = main([str(iq_dat), "--variance", "log", "--save", str(out)])
+    assert rc == 0
+    assert _png_nonempty(out)
+
+
+# --- bandheatmaps ------------------------------------------------------------
+# conftest TRIG=1000 Hz -> Nyquist 500 Hz; bands stay below that.
+
+
+def test_bandheatmaps_three_bands(phase_dat, tmp_path):
+    out = tmp_path / "bands.png"
+    rc = main(["bandheatmaps", str(phase_dat),
+               "--f1", "50", "--f2", "100", "--f3", "200", "--save", str(out)])
+    assert rc == 0
+    assert _png_nonempty(out)
+
+
+def test_bandheatmaps_with_f0_and_variance(phase_dat, tmp_path):
+    out = tmp_path / "bands_f0.png"
+    rc = main(["bandheatmaps", str(phase_dat), "--f0", "20",
+               "--f1", "100", "--f2", "200", "--variance", "log", "--save", str(out)])
+    assert rc == 0
+    assert _png_nonempty(out)
+
+
+def test_bandheatmaps_single_band(iq_dat, tmp_path):
+    out = tmp_path / "band1.png"
+    rc = main(["bandheatmaps", str(iq_dat), "--f1", "100", "--save", str(out)])
+    assert rc == 0
+    assert _png_nonempty(out)
+
+
+def test_bandheatmaps_requires_f1(phase_dat, capsys):
+    rc = main(["bandheatmaps", str(phase_dat), "--f2", "200"])
+    assert rc == 1
+    assert "f1" in capsys.readouterr().err
+
+
+def test_bandheatmaps_rejects_decreasing_edges(phase_dat, capsys):
+    rc = main(["bandheatmaps", str(phase_dat), "--f1", "200", "--f2", "100"])
+    assert rc == 1
+    assert "increasing" in capsys.readouterr().err
+
+
 def test_trace_subcommand(raw_dat, tmp_path):
     out = tmp_path / "t.png"
     rc = main(["trace", str(raw_dat), "--position", "5", "--save", str(out)])
@@ -149,7 +203,10 @@ def test_version_flag(capsys):
     assert "audace-display" in capsys.readouterr().out
 
 
-@pytest.mark.parametrize("cmd", ["auto", "info", "heatmap", "fft", "trace", "scope", "demod"])
+@pytest.mark.parametrize(
+    "cmd",
+    ["auto", "info", "heatmap", "bandheatmaps", "fft", "trace", "scope", "demod"],
+)
 def test_subcommand_help_has_example(cmd, capsys):
     with pytest.raises(SystemExit) as exc:
         main([cmd, "--help"])

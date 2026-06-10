@@ -51,6 +51,41 @@ def test_temporal_fft_too_short():
         processing.temporal_fft(np.zeros((1, 4)), fs=1000.0, window="hann", detrend=False)
 
 
+def test_band_limited_isolates_tone_in_band():
+    # Two tones; a band around only one of them must keep that one and kill the
+    # other (brick-wall band-pass along axis 0).
+    fs = 1000.0
+    n = 2000
+    t = np.arange(n) / fs
+    keep, drop = 50.0, 300.0
+    sig = (np.sin(2 * np.pi * keep * t) + np.sin(2 * np.pi * drop * t)).astype(np.float32)
+    out = processing.band_limited(sig[:, None], fs=fs, f_lo=30.0, f_hi=120.0)[:, 0]
+    # RMS of a unit sine is 1/sqrt(2) ~ 0.707; only the in-band tone survives.
+    assert np.sqrt(np.mean(out ** 2)) == pytest.approx(1 / np.sqrt(2), rel=0.05)
+    # the 300 Hz component is gone -> residual at that bin is negligible
+    spec = np.abs(np.fft.rfft(out))
+    freqs = np.fft.rfftfreq(n, d=1 / fs)
+    assert spec[np.argmin(np.abs(freqs - drop))] < 1e-3 * spec.max()
+
+
+def test_band_limited_lowband_keeps_dc():
+    fs = 1000.0
+    n = 1024
+    sig = (5.0 + np.zeros(n)).astype(np.float32)[:, None]  # pure DC
+    kept = processing.band_limited(sig, fs=fs, f_lo=0.0, f_hi=10.0)[:, 0]
+    np.testing.assert_allclose(kept, 5.0, atol=1e-4)
+    dropped = processing.band_limited(sig, fs=fs, f_lo=1.0, f_hi=10.0)[:, 0]
+    assert np.allclose(dropped, 0.0, atol=1e-4)  # f_lo > 0 removes DC
+
+
+def test_to_log_variance_is_log10_and_floors_zeros():
+    var = np.array([[1.0, 100.0, 0.0]], dtype=np.float32)
+    out = processing.to_log_variance(var)
+    assert out[0, 0] == pytest.approx(0.0)      # log10(1) = 0
+    assert out[0, 1] == pytest.approx(2.0)      # log10(100) = 2
+    assert np.isfinite(out[0, 2]) and out[0, 2] < 0.0  # zero floored, not -inf
+
+
 def test_parse_position_spec_single_list_range():
     step = 0.5
     total = 100

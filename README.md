@@ -8,7 +8,9 @@ library, automatically detects the file mode, and shows:
 
 - a **heatmap** (distance x time waterfall) for **demodulated** files,
 - an **animated oscilloscope** (lines replayed in real time, looping) for **raw**
-  files.
+  files,
+- **per-frequency-band heatmaps** (`bandheatmaps`) and a temporal **variance /
+  log-variance** color mode (`--variance`).
 
 Reading is **streamed and decimated**: a multi-GB file is reduced to screen
 resolution without ever being fully loaded into memory.
@@ -85,22 +87,26 @@ Requires `invisensing >= 1.1.0` (O(1) per-line seek).
 
 ## Subcommands
 
-| Command   | Role |
-|-----------|------|
-| *(none)*  | Auto: heatmap (demodulated) or animated oscilloscope (raw) |
-| `info`    | Header metadata + stats of the default channel |
-| `heatmap` | Distance x time waterfall, color = channel |
-| `scope`   | Oscilloscope: replays the lines (pulses) in real time, looping |
-| `fft`     | Temporal spectrum (FFT along the pulses) at 1+ position(s) |
-| `trace`   | 1-D time trace at one position |
-| `inspect` | One location: time waveform + FFT spectrum in a single figure |
-| `demod`   | Demodulate via an **external script**, then show as heatmap |
+| Command        | Role |
+|----------------|------|
+| *(none)*       | Auto: heatmap (demodulated) or animated oscilloscope (raw) |
+| `info`         | Header metadata + stats of the default channel |
+| `heatmap`      | Distance x time waterfall, color = channel |
+| `bandheatmaps` | Per-frequency-band waterfalls (one panel per band + global) |
+| `scope`        | Oscilloscope: replays the lines (pulses) in real time, looping |
+| `fft`          | Temporal spectrum (FFT along the pulses) at 1+ position(s) |
+| `trace`        | 1-D time trace at one position |
+| `inspect`      | One location: time waveform + FFT spectrum in a single figure |
+| `demod`        | Demodulate via an **external script**, then show as heatmap |
 
 ```bash
 audace-display info acquisition.dat
 audace-display heatmap acquisition.dat --channel magnitude --db
+audace-display heatmap acquisition.dat --variance log         # temporal log-variance
 audace-display heatmap acquisition.dat --start-time 0.5 --duration 1.0
 audace-display heatmap acquisition.dat --start-distance 50 --end-distance 200
+audace-display bandheatmaps acquisition.dat --f1 200 --f2 500 --f3 1500
+audace-display bandheatmaps acquisition.dat --f0 100 --f1 200 --f2 500
 audace-display fft   acquisition.dat --position 120
 audace-display fft   acquisition.dat --position 50,100,150 --db
 audace-display fft   acquisition.dat --position-range 100:200 --window blackman
@@ -134,12 +140,45 @@ and aggregated on the fly into a `--max-time-bins x --max-space-bins` grid
 |--------|--------|
 | `--max-time-bins N`  | Temporal (Y) resolution of the waterfall. Default 2000 |
 | `--max-space-bins N` | Spatial (X) resolution of the waterfall. Default 2000 |
-| `--reduce {mean,rms,std,peak}` | Temporal aggregation statistic. Default `mean` |
+| `--reduce {mean,rms,std,variance,peak}` | Temporal aggregation statistic. Default `mean` |
+| `--variance {linear,log}` | Color each time bin by its temporal **variance** (`log` = log10). Overrides `--reduce`/`--db`. Off by default |
 | `--max-pulses N`     | Bound the number of pulses read (default: whole file) |
 | `--subsample-time N` | (fft/trace) keep only one pulse out of N |
 
 `.dat` and `.hdf5` stream natively; `.tdms` and `.sgy` also stream with
 `invisensing >= 1.1.0`. `--start-time` seeks directly (O(1) seek) with 1.1.0.
+
+## Frequency-band heatmaps
+
+`bandheatmaps` decomposes the **temporal** frequency axis (the FFT along the
+pulses, Nyquist = `trig_frequency / 2`) into up to 3 contiguous bands and renders
+one distance x time waterfall per band, plus the global heatmap. A band panel
+band-pass filters the signal to its `[f_lo, f_hi)` range, then colors each time
+bin by its **energy** (temporal RMS; or variance / log-variance with
+`--variance`) -- showing *where* (distance) and *when* (time) activity appears in
+that frequency range.
+
+```bash
+# 3 bands: 0-200, 200-500, 500-1500 Hz, plus the global heatmap
+audace-display bandheatmaps acq.dat --f1 200 --f2 500 --f3 1500
+
+# Drop everything below 100 Hz: first band becomes 100-200 Hz
+audace-display bandheatmaps acq.dat --f0 100 --f1 200 --f2 500 --f3 1500
+
+# 1 band + global, energy as log-variance, bounded window
+audace-display bandheatmaps acq.dat --f1 50 --variance log --duration 2
+```
+
+| Option | Effect |
+|--------|--------|
+| `--f1 HZ` | Upper edge of band 1 (Hz). **Required** |
+| `--f2 HZ` / `--f3 HZ` | Upper edges of bands 2 / 3 (optional, contiguous) |
+| `--f0 HZ` | Lower edge of the **first** band. Default 0 (keeps DC) |
+| `--variance {linear,log}` | Band color = variance / log-variance instead of RMS |
+
+The full time series is held in RAM for the FFT, so band analysis bounds memory
+with `--duration` / `--max-pulses` / `--max-space-bins` (default 1000 spatial
+bins) and warns past ~0.5 GB.
 
 ## Demodulation via external plugin
 

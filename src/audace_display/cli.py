@@ -2,8 +2,8 @@
 
 Zero-config usage: ``audace-display FILE`` automatically picks a **heatmap**
 (demodulated file) or an **animated oscilloscope** (raw file). The
-``info`` / ``heatmap`` / ``fft`` / ``trace`` / ``scope`` / ``inspect`` /
-``demod`` subcommands give fine-grained control.
+``info`` / ``heatmap`` / ``bandheatmaps`` / ``fft`` / ``trace`` / ``scope`` /
+``inspect`` / ``demod`` subcommands give fine-grained control.
 """
 from __future__ import annotations
 
@@ -28,7 +28,10 @@ except Exception:  # pragma: no cover - version is informational only
 _FFT_MAX_CELLS = 256 * 1024 * 1024 // 4
 _FFT_MAX_POSITIONS = 256
 
-SUBCOMMANDS = {"auto", "info", "heatmap", "fft", "trace", "scope", "demod", "inspect"}
+SUBCOMMANDS = {
+    "auto", "info", "heatmap", "bandheatmaps", "fft", "trace", "scope",
+    "demod", "inspect",
+}
 
 
 def _warn(msg: str) -> None:
@@ -62,15 +65,44 @@ def _heatmap_title(f, channel_or_label: str) -> str:
     return f"{f.path.name} -- mode={f.mode.value}, {channel_or_label}"
 
 
+def _split_label(base_label: str) -> tuple[str, str]:
+    """``'phase (rad)'`` -> ``('phase', 'rad')``.
+
+    Splits on the *last* ``' ('`` so inner parentheses (e.g. ``arctan(Q/I)``)
+    are preserved in the head. Returns ``(label, '')`` when there is no unit.
+    """
+    if base_label.endswith(")") and " (" in base_label:
+        head, unit = base_label.rsplit(" (", 1)
+        return head, unit[:-1]
+    return base_label, ""
+
+
+def _variance_label(base_label: str, variance: str) -> str:
+    """Colorbar label for a variance / log-variance field (units squared)."""
+    head, unit = _split_label(base_label)
+    sq = f" ({unit}^2)" if unit else ""
+    prefix = "log10 Var" if variance == "log" else "Var"
+    return f"{prefix}[{head}]{sq}"
+
+
+def _rms_label(base_label: str) -> str:
+    """Colorbar label for a band-energy (RMS) field (same units as the signal)."""
+    head, unit = _split_label(base_label)
+    return f"RMS[{head}]" + (f" ({unit})" if unit else "")
+
+
 # --- Heatmap rendering (shared by heatmap / demod / auto) ---------------------
 
 
 def _render_heatmap(f, args, transform, base_label: str, is_angular: bool, subtitle: str) -> None:
+    # --variance overrides --reduce: variance is non-negative and gets its own
+    # (optionally log) scaling, so it never combines with dB or the angular cmap.
+    variance = getattr(args, "variance", None)
     res = reader.load_decimated(
         f, transform,
         max_time_bins=args.max_time_bins,
         max_space_bins=args.max_space_bins,
-        reduce=args.reduce,
+        reduce="variance" if variance else args.reduce,
         start_time=args.start_time,
         duration=args.duration,
         start_distance=args.start_distance,
@@ -79,16 +111,22 @@ def _render_heatmap(f, args, transform, base_label: str, is_angular: bool, subti
     )
     data = res.data
     use_db = getattr(args, "db", False)
+    angular = is_angular
     label = base_label
-    if use_db:
+    if variance:
+        angular = False
+        use_db = False
+        if variance == "log":
+            data = processing.to_log_variance(data)
+        label = _variance_label(base_label, variance)
+    elif use_db:
         data, ref = processing.to_db(data)
-        head = base_label.split(" (")[0]
-        unit = base_label.split("(")[-1].rstrip(")") if "(" in base_label else ""
+        head, unit = _split_label(base_label)
         label = f"{head} (dB, ref={ref:.3g} {unit})".strip()
     vmin, vmax = processing.auto_clim(
-        data, is_angular=is_angular, use_db=use_db, vmin=args.vmin, vmax=args.vmax
+        data, is_angular=angular, use_db=use_db, vmin=args.vmin, vmax=args.vmax
     )
-    cmap = args.cmap or processing.default_cmap(is_angular, use_db)
+    cmap = args.cmap or processing.default_cmap(angular, use_db)
     title = args.title or _heatmap_title(f, subtitle)
 
     if _resolve_backend(args) == "qt":
@@ -185,6 +223,139 @@ def do_demod(f, args) -> int:
         f, args, plugin.transform, plugin.label, plugin.is_angular,
         subtitle=f"demod={args.script}",
     )
+    return 0
+
+
+def _parse_bands(args, nyquist: float) -> list[tuple[float, float]]:
+    """Build the ``[(f_lo, f_hi), ...]`` band list from ``--f0/--f1/--f2/--f3``.
+
+    ``--f1`` is required; ``--f2`` requires ``--f1`` and ``--f3`` requires
+    ``--f2`` (contiguous bands). ``--f0`` (default 0, i.e. include DC) is the
+    lower edge of the first band. Edges must be strictly increasing; any edge
+    above Nyquist is clamped (with a warning) and bands made degenerate by the
+    clamp are dropped.
+    """
+    if args.f1 is None:
+        raise AudaceDisplayError(
+            "bandheatmaps needs at least --f1 (upper edge of band 1, in Hz)."
+        )
+    if args.f3 is not None and args.f2 is None:
+        raise AudaceDisplayError("--f3 requires --f2 (bands must be contiguous).")
+
+    f0 = 0.0 if args.f0 is None else args.f0
+    if f0 < 0:
+        raise AudaceDisplayError("--f0 must be >= 0.")
+    edges = [f0] + [t for t in (args.f1, args.f2, args.f3) if t is not None]
+    for lo, hi in zip(edges, edges[1:]):
+        if hi <= lo:
+            raise AudaceDisplayError(
+                f"band edges must be strictly increasing, got {edges} Hz."
+            )
+    if edges[-1] > nyquist:
+        _warn(
+            f"band edge {edges[-1]:.0f} Hz exceeds Nyquist ({nyquist:.0f} Hz); "
+            f"clamping to Nyquist."
+        )
+        edges = [min(e, nyquist) for e in edges]
+    bands = [(lo, hi) for lo, hi in zip(edges, edges[1:]) if hi > lo]
+    if not bands:
+        raise AudaceDisplayError("no valid frequency band after clamping to Nyquist.")
+    return bands
+
+
+def do_bandheatmaps(f, args) -> int:
+    """Per-frequency-band waterfalls: a global heatmap + one panel per band.
+
+    Each band panel band-pass filters the temporal signal (FFT along the pulse
+    axis) to ``[f_lo, f_hi)`` Hz, then shows its energy -- temporal RMS per time
+    bin, or variance / log-variance with ``--variance`` -- as a distance x time
+    heatmap. The global panel (always shown) is the plain channel heatmap (mean),
+    or its temporal variance when ``--variance`` is set.
+    """
+    canonical, resolver, base_label, is_ang = resolve_channel(args.channel, f.mode)
+    trig = f.trig_frequency
+    bands = _parse_bands(args, nyquist=trig / 2.0)
+
+    # The whole time series must be resident for the temporal FFT: warn (like
+    # `fft`) when the requested window is large before actually loading it.
+    p0, p1 = reader.time_window_pulses(f, args.start_time, args.duration, args.max_pulses)
+    est_space = min(args.max_space_bins, f.positions_per_line)
+    est_bytes = (p1 - p0) * est_space * 4
+    if est_bytes > 512 * 1024 * 1024:
+        _warn(
+            f"bandheatmaps: ~{est_bytes / 1e9:.1f} GB to load "
+            f"({p1 - p0:,} pulses x {est_space} bins). Use --duration / "
+            f"--max-pulses / --max-space-bins if memory is limited."
+        )
+
+    res = reader.load_time_matrix(
+        f, _channel_transform(f, resolver),
+        max_space_bins=args.max_space_bins,
+        start_time=args.start_time, duration=args.duration,
+        start_distance=args.start_distance, end_distance=args.end_distance,
+        max_pulses=args.max_pulses,
+    )
+    matrix = res.data
+    if matrix.shape[0] < 2:
+        raise AudaceDisplayError("not enough pulses for a band analysis.")
+
+    variance = args.variance
+
+    def _bin_time(sig: np.ndarray, op: str) -> np.ndarray:
+        n_pulses = sig.shape[0]
+        t_factor = max(1, math.ceil(n_pulses / args.max_time_bins))
+        n_time = math.ceil(n_pulses / t_factor)
+        acc = decimate.TimeBinAccumulator(n_time, sig.shape[1], t_factor, op)
+        acc.add(sig)  # whole matrix is already in RAM -> one pass
+        return acc.result()
+
+    def _panel(data2d: np.ndarray, *, title: str, label: str, angular: bool) -> dict:
+        vmin, vmax = processing.auto_clim(data2d, is_angular=angular, use_db=False)
+        cmap = args.cmap or processing.default_cmap(angular, False)
+        return dict(data=data2d, title=title, label=label, vmin=vmin, vmax=vmax, cmap=cmap)
+
+    panels: list[dict] = []
+
+    # Global reference panel.
+    g_data = _bin_time(matrix, "variance" if variance else "mean")
+    if variance == "log":
+        g_data = processing.to_log_variance(g_data)
+    if variance:
+        panels.append(_panel(
+            g_data, title="global (whole band)",
+            label=_variance_label(base_label, variance), angular=False))
+    else:
+        panels.append(_panel(
+            g_data, title="global (mean)", label=base_label, angular=is_ang))
+
+    # One panel per band: energy of the band-passed signal.
+    for f_lo, f_hi in bands:
+        band_sig = processing.band_limited(matrix, fs=trig, f_lo=f_lo, f_hi=f_hi)
+        b_data = _bin_time(band_sig, "variance" if variance else "rms")
+        if variance == "log":
+            b_data = processing.to_log_variance(b_data)
+        if variance:
+            label = _variance_label(base_label, variance)
+            kind = "log variance" if variance == "log" else "variance"
+        else:
+            label = _rms_label(base_label)
+            kind = "RMS"
+        panels.append(_panel(
+            b_data, title=f"{f_lo:.0f}-{f_hi:.0f} Hz ({kind})",
+            label=label, angular=False))
+
+    suptitle = args.title or (
+        f"{f.path.name} -- band heatmaps (mode={f.mode.value}, channel={canonical})"
+    )
+    if getattr(args, "backend", "matplotlib") in _QT_BACKENDS and not args.save:
+        _warn("bandheatmaps is rendered with matplotlib (multi-panel); "
+              "--backend pyqtgraph is ignored.")
+
+    from . import plotting
+    fig = plotting.build_band_heatmaps(
+        panels, t_extent=res.t_extent, d_extent=res.d_extent, suptitle=suptitle,
+    )
+    plotting.show_or_save(fig, args.save, args.dpi)
     return 0
 
 
@@ -519,6 +690,14 @@ def _add_decim(p: argparse.ArgumentParser) -> None:
                    help="Limit the number of pulses read (default: whole file).")
 
 
+def _add_variance_opt(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--variance", choices=["linear", "log"], default=None,
+                   metavar="{linear,log}",
+                   help="Color each time bin by its temporal VARIANCE instead of "
+                        "the mean ('log' = log10 of the variance). Off by default; "
+                        "overrides --reduce and --db.")
+
+
 def _add_heatmap_style(p: argparse.ArgumentParser) -> None:
     p.add_argument("--db", action="store_true", help="dB scale (ref = observed max).")
     p.add_argument("--vmin", type=float, default=None, help="Lower colorbar bound (auto).")
@@ -570,7 +749,8 @@ Simplest form -- no subcommand needed:
     audace-display acq.dat                 # auto: heatmap or oscilloscope
     audace-display acq.dat --save out.png  # PNG export (headless mode)
 
-Subcommands for fine control: info, heatmap, fft, trace, scope, inspect, demod.
+Subcommands for fine control: info, heatmap, bandheatmaps, fft, trace, scope,
+inspect, demod.
 """
 
 _EPILOG = """\
@@ -668,10 +848,34 @@ Examples:
   audace-display heatmap acq.dat
   audace-display heatmap acq.dat --channel phase --cmap RdBu_r
   audace-display heatmap acq.dat --db --vmin -60 --vmax 0
+  audace-display heatmap acq.dat --variance log       # temporal log-variance
   audace-display heatmap acq.dat --start-time 0.5 --duration 1.0
   audace-display heatmap acq.dat --start-distance 50 --end-distance 200
   audace-display heatmap acq.dat --reduce rms --max-time-bins 4000
   audace-display heatmap acq.dat --save wf.png --dpi 200
+"""
+
+_BAND_DESC = """\
+Per-frequency-band waterfalls. Splits the temporal frequency axis (FFT along the
+pulses) into up to 3 contiguous bands and shows one distance x time heatmap per
+band, plus the global heatmap. A band panel band-pass filters the signal to its
+[f_lo, f_hi) range, then colors each time bin by its energy (temporal RMS, or
+variance / log-variance with --variance).
+
+Bands are defined by their upper edges --f1 < --f2 < --f3 (only --f1 is
+required): [f0, f1), [f1, f2), [f2, f3). --f0 (default 0, i.e. keep DC) sets the
+lower edge of the first band, e.g. --f0 100 drops everything below 100 Hz.
+
+The full time series is held in RAM for the FFT: restrict big files with
+--duration / --max-pulses / --max-space-bins.
+"""
+_BAND_EPILOG = """\
+Examples:
+  audace-display bandheatmaps acq.dat --f1 200 --f2 500 --f3 1500
+  audace-display bandheatmaps acq.dat --f0 100 --f1 200 --f2 500 --f3 1500
+  audace-display bandheatmaps acq.dat --f1 50                      # 1 band + global
+  audace-display bandheatmaps acq.dat --f1 200 --f2 500 --variance log
+  audace-display bandheatmaps acq.dat --f1 200 --f2 500 --duration 2 --save bands.png
 """
 
 _FFT_DESC = """\
@@ -779,6 +983,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_window(p_auto)
     _add_decim(p_auto)
     _add_heatmap_style(p_auto)
+    _add_variance_opt(p_auto)
     _add_scope_opts(p_auto)   # raw -> animated oscilloscope
     _add_backend(p_auto)
     p_auto.set_defaults(func=lambda a: _open_and_run(do_auto, a))
@@ -799,8 +1004,36 @@ def build_parser() -> argparse.ArgumentParser:
     _add_window(p_heat)
     _add_decim(p_heat)
     _add_heatmap_style(p_heat)
+    _add_variance_opt(p_heat)
     _add_backend(p_heat)
     p_heat.set_defaults(func=lambda a: _open_and_run(do_heatmap, a))
+
+    # bandheatmaps
+    p_band = _subparser(sub, "bandheatmaps",
+                        help="Per-frequency-band waterfalls (+ global).",
+                        description=_BAND_DESC, epilog=_BAND_EPILOG)
+    _add_io(p_band)
+    p_band.add_argument("--channel", "-c", default=None, help="Channel (default depends on mode).")
+    _add_window(p_band)
+    p_band.add_argument("--max-time-bins", type=int, default=2000,
+                        help="Max time bins (Y resolution). Default 2000.")
+    p_band.add_argument("--max-space-bins", type=int, default=1000,
+                        help="Max spatial bins (X resolution). Default 1000 "
+                             "(the full time series is held in RAM).")
+    p_band.add_argument("--max-pulses", type=int, default=None,
+                        help="Limit the number of pulses read (default: whole file).")
+    p_band.add_argument("--f0", type=float, default=None, metavar="HZ",
+                        help="Lower edge of the FIRST band (Hz). Default 0 (keeps DC).")
+    p_band.add_argument("--f1", type=float, default=None, metavar="HZ",
+                        help="Upper edge of band 1 (Hz). REQUIRED.")
+    p_band.add_argument("--f2", type=float, default=None, metavar="HZ",
+                        help="Upper edge of band 2 (Hz). Optional.")
+    p_band.add_argument("--f3", type=float, default=None, metavar="HZ",
+                        help="Upper edge of band 3 (Hz). Optional.")
+    p_band.add_argument("--cmap", default=None, help="matplotlib colormap (default auto).")
+    _add_variance_opt(p_band)
+    _add_backend(p_band)
+    p_band.set_defaults(func=lambda a: _open_and_run(do_bandheatmaps, a))
 
     # fft
     p_fft = _subparser(sub, "fft",
@@ -896,6 +1129,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_window(p_dem)
     _add_decim(p_dem)
     _add_heatmap_style(p_dem)
+    _add_variance_opt(p_dem)
     _add_backend(p_dem)
     p_dem.set_defaults(func=lambda a: _open_and_run(do_demod, a), _accepts_plugin_args=True)
 

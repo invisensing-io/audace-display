@@ -16,7 +16,7 @@ import numpy as np
 
 from ._errors import AudaceDisplayError
 
-REDUCERS = ("mean", "rms", "std", "peak")
+REDUCERS = ("mean", "rms", "std", "variance", "peak")
 
 
 def bin_edges(n: int, n_bins: int) -> np.ndarray:
@@ -116,8 +116,10 @@ class TimeBinAccumulator:
         self.n_time = int(n_time_bins)
         self.n_space = int(n_space_bins)
         shape = (self.n_time, self.n_space)
-        self._sum = np.zeros(shape, np.float64) if op in ("mean", "rms", "std") else None
-        self._sumsq = np.zeros(shape, np.float64) if op in ("rms", "std") else None
+        _needs_sum = ("mean", "rms", "std", "variance")
+        _needs_sumsq = ("rms", "std", "variance")
+        self._sum = np.zeros(shape, np.float64) if op in _needs_sum else None
+        self._sumsq = np.zeros(shape, np.float64) if op in _needs_sumsq else None
         self._peak = np.zeros(shape, np.float64) if op == "peak" else None
         self._count = np.zeros(self.n_time, np.int64)
         self._row = 0  # global count of consumed lines
@@ -157,6 +159,9 @@ class TimeBinAccumulator:
             mean = self._sum / cnt
             var = self._sumsq / cnt - np.square(mean)
             out = np.sqrt(np.maximum(var, 0.0))
+        elif self.op == "variance":
+            mean = self._sum / cnt
+            out = np.maximum(self._sumsq / cnt - np.square(mean), 0.0)
         else:  # peak
             out = self._peak
         return out.astype(np.float32)

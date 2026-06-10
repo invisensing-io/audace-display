@@ -9,8 +9,8 @@ Reads any format produced by the Filewriter (``.dat`` / ``.hdf5`` / ``.tdms`` /
 with automatic mode detection. *Streaming* decimation to handle multi-GB files
 in bounded RAM.
 
-CLI: ``audace-display FILE`` (auto) or subcommands
-``info`` / ``heatmap`` / ``fft`` / ``trace`` / ``scope`` / ``demod``.
+CLI: ``audace-display FILE`` (auto) or subcommands ``info`` / ``heatmap`` /
+``bandheatmaps`` / ``fft`` / ``trace`` / ``scope`` / ``demod``.
 
 Programmatic API (stable):
 
@@ -23,13 +23,15 @@ from .channels import resolve_channel, CHANNELS, DEFAULT_CHANNEL
 from .reader import (
     load_decimated,
     load_columns,
+    load_time_matrix,
     position_step_m,
     time_window_pulses,
     DecimatedResult,
+    TimeMatrixResult,
 )
 from .demod import load_demodulator, DemodPlugin
 
-__version__ = "0.3.1"
+__version__ = "0.5.0"
 
 __all__ = [
     "AudaceDisplayError",
@@ -38,9 +40,11 @@ __all__ = [
     "DEFAULT_CHANNEL",
     "load_decimated",
     "load_columns",
+    "load_time_matrix",
     "position_step_m",
     "time_window_pulses",
     "DecimatedResult",
+    "TimeMatrixResult",
     "load_demodulator",
     "DemodPlugin",
     "__version__",

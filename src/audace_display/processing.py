@@ -31,6 +31,38 @@ def to_db(data: np.ndarray, ref: Optional[float] = None) -> tuple[np.ndarray, fl
     return db.astype(np.float32), ref
 
 
+def to_log_variance(var: np.ndarray) -> np.ndarray:
+    """``log10`` of a non-negative (variance) field for display.
+
+    Empty/zero bins are floored to ``max(var)*1e-12`` (≈ 120 dB of dynamic
+    range below the peak) so the result stays finite; the floor is well below
+    anything the percentile auto-scaling keeps, so it never skews the colorbar.
+    """
+    var = np.asarray(var, dtype=np.float64)
+    mx = float(var.max()) if var.size else 1.0
+    floor = max(mx * 1e-12, DB_EPS)
+    return np.log10(np.maximum(var, floor)).astype(np.float32)
+
+
+def band_limited(matrix: np.ndarray, *, fs: float, f_lo: float, f_hi: float) -> np.ndarray:
+    """Brick-wall band-pass of ``matrix`` along axis 0 (time) via the FFT.
+
+    ``matrix`` is ``(n_time, n_space)``: each column (position) is filtered to
+    keep only the temporal frequencies in ``[f_lo, f_hi)`` (Hz), then transformed
+    back to the time domain. ``f_lo <= 0`` keeps DC. Returns the same shape in
+    ``float32``. This is the spectral decomposition behind ``bandheatmaps``.
+    """
+    m = np.asarray(matrix, dtype=np.float64)
+    n = m.shape[0]
+    if n < 2:
+        return m.astype(np.float32)
+    spec = np.fft.rfft(m, axis=0)
+    freqs = np.fft.rfftfreq(n, d=1.0 / fs)
+    keep = (freqs >= f_lo) & (freqs < f_hi)
+    spec[~keep, :] = 0.0
+    return np.fft.irfft(spec, n=n, axis=0).astype(np.float32)
+
+
 # --- FFT windows -------------------------------------------------------------
 
 

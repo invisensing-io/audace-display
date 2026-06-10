@@ -31,6 +31,9 @@ Transform = Callable[[np.ndarray], np.ndarray]
 _CHUNK_BYTES = 256 * 1024 * 1024
 #: Chunk size for the read-and-discard skip when `seek_lines` is absent.
 _DISCARD_CHUNK = 1 << 20
+#: Hard ceiling (float32 cells) for the in-RAM matrix of :func:`load_time_matrix`.
+#: Band analysis needs the full time series resident, so this caps the request.
+_TIME_MATRIX_MAX_CELLS = 2 * 1024 * 1024 * 1024 // 4  # 2 GiB of float32
 
 
 def position_step_m(f, n_positions: Optional[int] = None) -> float:
@@ -199,6 +202,103 @@ def load_decimated(
         d_extent=(geom["d0"] * d_step, geom["d1"] * d_step),
         t_factor=geom["t_factor"],
         d_factor=geom["width"] / max(geom["n_space"], 1),
+        n_positions=geom["n_pos"],
+    )
+
+
+@dataclass
+class TimeMatrixResult:
+    """Full-time-resolution, spatially-binned matrix + axis metadata.
+
+    Unlike :class:`DecimatedResult`, the **time axis is not reduced**: ``data`` is
+    ``(n_pulses, n_space)``, suitable for a per-position temporal FFT (band
+    decomposition). Memory is ``n_pulses * n_space * 4`` bytes.
+    """
+
+    data: np.ndarray                # (n_pulses, n_space) float32
+    trig: float                     # effective pulse rate (Hz)
+    t_extent: tuple[float, float]   # (t0, t1) seconds
+    d_extent: tuple[float, float]   # (d0, d1) meters
+    n_positions: int                # positions available after transform
+
+
+def load_time_matrix(
+    f,
+    transform: Transform,
+    *,
+    max_space_bins: int = 1000,
+    start_time: Optional[float] = None,
+    duration: Optional[float] = None,
+    start_distance: Optional[float] = None,
+    end_distance: Optional[float] = None,
+    max_pulses: Optional[int] = None,
+    max_cells: int = _TIME_MATRIX_MAX_CELLS,
+) -> TimeMatrixResult:
+    """Spatially-binned matrix at **full temporal resolution** (streamed read).
+
+    Space is pooled by mean to ``max_space_bins`` columns; time keeps every pulse
+    so a temporal FFT can decompose it into frequency bands. Raises if the
+    requested window would exceed ``max_cells`` float32 cells -- restrict it with
+    ``start_time``/``duration``/``max_pulses`` or a smaller ``max_space_bins``.
+    """
+    p0, p1 = _pulse_range(f, start_time, duration)
+    if max_pulses is not None:
+        p1 = min(p1, p0 + max_pulses)
+    total_p = p1 - p0
+
+    _advance_to(f, p0)
+    chunk = _chunk_pulses(f.line_size)
+
+    parts: list[np.ndarray] = []
+    geom: dict = {}
+    read = 0
+    while read < total_p:
+        raw = f.read_lines(min(chunk, total_p - read))
+        if raw.shape[0] == 0:
+            break
+        resolved = np.asarray(transform(raw))
+        if resolved.ndim != 2:
+            raise AudaceDisplayError(
+                f"the transform must return a 2-D array, got {resolved.shape}."
+            )
+
+        if not geom:  # first iteration: lock the geometry + bound the memory
+            n_pos = resolved.shape[1]
+            d_step = position_step_m(f, n_pos)
+            d0, d1 = _distance_range(start_distance, end_distance, d_step, n_pos)
+            width = d1 - d0
+            n_space = min(max_space_bins, width)
+            col_edges = decimate.bin_edges(width, n_space)
+            cells = total_p * n_space
+            if cells > max_cells:
+                raise AudaceDisplayError(
+                    f"band analysis needs the whole time series in RAM "
+                    f"(~{cells * 4 / 1e9:.1f} GB: {total_p:,} pulses x {n_space} "
+                    f"bins). Restrict with --duration / --max-pulses, or lower "
+                    f"--max-space-bins."
+                )
+            geom = dict(d0=d0, d1=d1, d_step=d_step, n_space=n_space,
+                        col_edges=col_edges, n_pos=n_pos)
+
+        sub = resolved[:, geom["d0"]:geom["d1"]]
+        cols = decimate.reduce_cols(sub, geom["col_edges"], op="mean")
+        parts.append(cols.astype(np.float32, copy=False))
+        read += raw.shape[0]
+
+    if not geom:
+        raise AudaceDisplayError("no data read.")
+
+    data = (
+        np.vstack(parts) if parts
+        else np.empty((0, geom["n_space"]), np.float32)
+    )
+    trig = f.trig_frequency
+    d_step = geom["d_step"]
+    return TimeMatrixResult(
+        data=data,
+        trig=trig,
+        t_extent=(p0 / trig, p1 / trig),
+        d_extent=(geom["d0"] * d_step, geom["d1"] * d_step),
         n_positions=geom["n_pos"],
     )
 

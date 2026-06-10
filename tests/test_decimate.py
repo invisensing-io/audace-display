@@ -69,7 +69,7 @@ def test_peak_line_passthrough_when_small():
     np.testing.assert_array_equal(xi, np.arange(50))
 
 
-@pytest.mark.parametrize("op", ["mean", "rms", "std", "peak"])
+@pytest.mark.parametrize("op", ["mean", "rms", "std", "variance", "peak"])
 def test_time_accumulator_single_bin(op):
     # 1 time bin covering all lines: compare against direct numpy
     rows, cols = 40, 8
@@ -87,8 +87,25 @@ def test_time_accumulator_single_bin(op):
         np.testing.assert_allclose(out[0], np.sqrt((data ** 2).mean(axis=0)), rtol=1e-5)
     elif op == "std":
         np.testing.assert_allclose(out[0], data.std(axis=0), rtol=1e-5)
+    elif op == "variance":
+        np.testing.assert_allclose(out[0], data.var(axis=0), rtol=1e-5)
     else:  # peak
         np.testing.assert_allclose(out[0], np.abs(data).max(axis=0), rtol=1e-5)
+
+
+def test_variance_is_std_squared():
+    # variance must be exactly (std)^2 on the same chunked accumulation
+    rows, cols, t_factor = 60, 5, 12
+    rng = np.random.default_rng(11)
+    data = rng.standard_normal((rows, cols))
+    n_time = (rows + t_factor - 1) // t_factor
+
+    def run(op):
+        acc = decimate.TimeBinAccumulator(n_time, cols, t_factor, op)
+        acc.add(data)
+        return acc.result()
+
+    np.testing.assert_allclose(run("variance"), run("std") ** 2, rtol=1e-5, atol=1e-7)
 
 
 def test_time_accumulator_multi_bin_chunk_independence():
