@@ -41,7 +41,15 @@ ALIASES: dict[str, str] = {
 
 
 def _ch_raw(f, buf: np.ndarray) -> np.ndarray:
-    """Raw ADC codes -> volts via the header `range`."""
+    """Raw ADC codes -> volts via the header `range`.
+
+    Float payloads classified as RAW (e.g. the ``amplitude/`` files of the
+    DUI keep-amplitude split, whose flags are FLOAT|DEMODULATED only) are
+    already in physical units: applying the ADC-code scaling would shrink
+    them ~30 000× and mislabel them. Pass them through unchanged.
+    """
+    if getattr(f, "is_float", False) or np.issubdtype(buf.dtype, np.floating):
+        return buf.astype(np.float32)
     return buf.astype(np.float32) * np.float32(f.range / 32768.0)
 
 
