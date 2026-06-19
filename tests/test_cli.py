@@ -127,6 +127,41 @@ def test_info_runs(raw_dat, capsys):
     assert "Mode" in captured.out and "raw" in captured.out
 
 
+class _FakeHeader:
+    def __init__(self, acquisition_ns):
+        self.acquisition_ns = acquisition_ns
+
+
+class _FakeFile:
+    def __init__(self, acquisition_ns, timestamp):
+        self.header = _FakeHeader(acquisition_ns)
+        self.timestamp = timestamp
+
+
+def test_format_timestamp_i64_ns_is_human_readable():
+    import re
+
+    from audace_display.cli import _format_timestamp
+
+    # Current i64-ns header form. The wall-clock date/hour is timezone-dependent,
+    # but the sub-second fraction and the raw-ns suffix are invariant.
+    out = _format_timestamp(_FakeFile(1_781_535_974_110_003_203, "1781535974110003203"))
+    assert re.fullmatch(
+        r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.110003203 \(1781535974110003203 ns\)",
+        out,
+    ), out
+
+
+def test_format_timestamp_legacy_ascii_is_stripped():
+    from audace_display.cli import _format_timestamp
+
+    # Legacy files keep their ASCII string and acquisition_ns == 0.
+    assert _format_timestamp(
+        _FakeFile(0, "Thu Sep 12 13:06:24 2024\n")
+    ) == "Thu Sep 12 13:06:24 2024"
+    assert _format_timestamp(_FakeFile(0, "")) == "(none)"
+
+
 def test_demod_subcommand(iq_dat, tmp_path):
     script = tmp_path / "d.py"
     script.write_text(

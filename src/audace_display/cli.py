@@ -8,6 +8,7 @@ Zero-config usage: ``audace-display FILE`` automatically picks a **heatmap**
 from __future__ import annotations
 
 import argparse
+import datetime
 import math
 import sys
 from typing import Optional
@@ -156,12 +157,28 @@ def _render_heatmap(f, args, transform, base_label: str, is_angular: bool, subti
 # --- Command cores (receive an open File) ------------------------------------
 
 
+def _format_timestamp(f) -> str:
+    """Human-readable acquisition start time.
+
+    Current-format files store the start instant as an i64 nanosecond epoch
+    (``header.acquisition_ns``); legacy files carry a free-form ASCII string in
+    ``timestamp`` (and ``acquisition_ns == 0``). Render the i64 form as a local
+    date-time so the field reads as an actual start time, not a raw integer.
+    """
+    ns = getattr(f.header, "acquisition_ns", 0) or 0
+    if ns:
+        sec, nsec = divmod(ns, 1_000_000_000)
+        dt = datetime.datetime.fromtimestamp(sec)
+        return f"{dt:%Y-%m-%d %H:%M:%S}.{nsec:09d} ({ns} ns)"
+    return f.timestamp.strip() or "(none)"
+
+
 def do_info(f, args) -> int:
     flags = _decode_flags(f.flags)
     d_step = reader.position_step_m(f)
     print(f"File: {f.path}")
     print(f"  Mode           : {f.mode.value}")
-    print(f"  Timestamp      : {f.timestamp}")
+    print(f"  Timestamp      : {_format_timestamp(f)}")
     print(f"  Pulses         : {f.num_lines:,}")
     print(f"  Duration       : {f.duration:.3f} s")
     print(f"  Sample rate    : {f.sample_rate:,} Hz")
@@ -616,7 +633,10 @@ def do_inspect(f, args) -> int:
 
     detrend = not args.no_detrend
     waveform = processing.remove_dc_and_trend(data[:, 0], detrend=detrend)
-    times = np.arange(waveform.size) / eff_trig
+    # Anchor the time axis at --start-time so the selected window is visible on
+    # the plot (consistent with `trace`); the FFT itself is offset-invariant.
+    t0 = args.start_time or 0.0
+    times = t0 + np.arange(waveform.size) / eff_trig
 
     clip = None if args.clip_percentile == 0 else args.clip_percentile
     ylim = processing.percentile_limits(waveform, clip)
@@ -628,6 +648,7 @@ def do_inspect(f, args) -> int:
     stats_text = (
         f"Location index: {idx}\n"
         f"Position: {idx * d_step:.2f} m\n"
+        f"Window: {t0:g}-{t0 + waveform.size / eff_trig:g} s\n"
         f"Samples: {waveform.size}\n"
         f"Rate: {eff_trig:g} Hz\n"
         f"Mean: {waveform.mean():.6g}\n"
