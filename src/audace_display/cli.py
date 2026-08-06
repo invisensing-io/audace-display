@@ -187,6 +187,7 @@ def do_info(f, args) -> int:
     print(f"  Positions      : {f.positions_per_line:,} per pulse")
     print(f"  Spatial step   : {d_step:.3f} m")
     print(f"  Fiber length   : {f.distance:.2f} m")
+    print(f"  Trigger delay  : {f.trigger_delay:,} samples ({f.trigger_delay_m:,} m)")
     print(f"  ADC range      : {f.range:.3f} V")
     print(f"  Sample size    : {f.sample_size} B")
     print(f"  Sockets        : {f.header.num_channels}")
@@ -210,7 +211,7 @@ def do_info(f, args) -> int:
 def _decode_flags(flags: int) -> str:
     from invisensing import (
         FLAG_DEMODULATED, FLAG_FLOAT, FLAG_PHASE,
-        FLAG_INTERLEAVED, FLAG_UNSIGNED, FLAG_AC, FLAG_HIZ,
+        FLAG_INTERLEAVED, FLAG_UNSIGNED, FLAG_AC, FLAG_HIZ, FLAG_MOZART,
     )
     bits = [
         name
@@ -221,6 +222,13 @@ def _decode_flags(flags: int) -> str:
         ]
         if flags & bit
     ]
+    # Which demodulation pipeline ran. Appended ONLY when DEMODULATED is set:
+    # Mozart-vs-Schubert is carried by the presence or absence of a single
+    # bit, so on a raw capture "SCHUBERT" would name a pipeline that never
+    # executed. A plain set-dump would never print SCHUBERT at all, which is
+    # why it is spelled out here instead of joining the table above.
+    if flags & FLAG_DEMODULATED:
+        bits.append("MOZART" if flags & FLAG_MOZART else "SCHUBERT")
     return " | ".join(bits) if bits else "0"
 
 
