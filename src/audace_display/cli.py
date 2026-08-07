@@ -187,7 +187,7 @@ def do_info(f, args) -> int:
     print(f"  Positions      : {f.positions_per_line:,} per pulse")
     print(f"  Spatial step   : {d_step:.3f} m")
     print(f"  Fiber length   : {f.distance:.2f} m")
-    print(f"  Trigger delay  : {f.trigger_delay:,} samples ({f.trigger_delay_m:,} m)")
+    print(f"  Trigger delay  : {f.trigger_delay:,} m")
     print(f"  ADC range      : {f.range:.3f} V")
     print(f"  Sample size    : {f.sample_size} B")
     print(f"  Sockets        : {f.header.num_channels}")
