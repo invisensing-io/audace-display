@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.7.0
+
+Requires `invisensing >= 1.4.0` (publish it to PyPI first).
+
+- **Corrected absolute times.** The Audace acquisition corrects the drift of
+  the card's oscillator and the shots it lost (the card's *time map*); the
+  recorder writes each HDF5 file's time axis into its attributes and
+  invisensing 1.4.0 reads it (`File.line_time_ns`). The absolute times
+  `audace-display` shows come from it (new `audace_display.absolute_time_ns`):
+  `info` prints the first and last pulse times and how the times were stamped,
+  e.g. `cardclock-v1: corrected, +0.098 ms vs the count (tracking, +/-61 us)`.
+- Unchanged on purpose: every rate (`line_rate_hz`: `fs` of the spectra and
+  band filters, Nyquist, relative time axes, `scope` speed) stays the
+  programmed cadence -- the correction moves time labels, not samples. Files
+  without a time map show what 0.6.0 showed, plus the last pulse time in `info`.
+
 ## 0.6.0
 
 Requires `invisensing >= 1.3.0` (publish it to PyPI first).

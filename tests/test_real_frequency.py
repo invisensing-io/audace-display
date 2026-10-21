@@ -435,5 +435,5 @@ def test_version_and_dependency_metadata():
     root = Path(__file__).resolve().parents[1]
     text = (root / "pyproject.toml").read_text()
     assert re.search(r'^version = "([^"]+)"', text, re.M).group(1) == audace_display.__version__
-    assert audace_display.__version__ == "0.6.0"
-    assert '"invisensing>=1.3.0"' in text
+    assert audace_display.__version__ == "0.7.0"
+    assert '"invisensing>=1.4.0"' in text

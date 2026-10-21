@@ -157,6 +157,13 @@ def _render_heatmap(f, args, transform, base_label: str, is_angular: bool, subti
 # --- Command cores (receive an open File) ------------------------------------
 
 
+def _format_ns(ns: int) -> str:
+    """``ns`` since the epoch as a local date-time, nanoseconds kept."""
+    sec, nsec = divmod(ns, 1_000_000_000)
+    dt = datetime.datetime.fromtimestamp(sec)
+    return f"{dt:%Y-%m-%d %H:%M:%S}.{nsec:09d} ({ns} ns)"
+
+
 def _format_timestamp(f) -> str:
     """Human-readable acquisition start time.
 
@@ -164,13 +171,51 @@ def _format_timestamp(f) -> str:
     (``header.acquisition_ns``); legacy files carry a free-form ASCII string in
     ``timestamp`` (and ``acquisition_ns == 0``). Render the i64 form as a local
     date-time so the field reads as an actual start time, not a raw integer.
+    The time is the first line's (:func:`reader.absolute_time_ns`): corrected
+    by the card's time map when the file carries it.
     """
-    ns = getattr(f.header, "acquisition_ns", 0) or 0
+    ns = reader.absolute_time_ns(f, 0)
     if ns:
-        sec, nsec = divmod(ns, 1_000_000_000)
-        dt = datetime.datetime.fromtimestamp(sec)
-        return f"{dt:%Y-%m-%d %H:%M:%S}.{nsec:09d} ({ns} ns)"
+        return _format_ns(ns)
     return f.timestamp.strip() or "(none)"
+
+
+def _format_time_correction(f) -> Optional[str]:
+    """How the file's times were stamped (invisensing >= 1.4.0), or ``None``
+    when the file does not say (older files, older invisensing)::
+
+        cardclock-v1: corrected, +0.098 ms vs the count (tracking, +/-61 us)
+        none: count (no time map)
+    """
+    tc = getattr(f, "time_correction", None)
+    if tc is None:
+        return None
+    if tc != "cardclock-v1":
+        return f"{tc}: count (no time map)"
+    parts = []
+    state = getattr(f, "time_correction_state", None)
+    if state is not None:
+        # A file carrying its time axis (HDF5) knows the count it replaces;
+        # a DAT / SEG-Y / TDMS only says its start time is the corrected one.
+        try:
+            delta = f.line_time_ns(0) - f.line_time_ns(0, nominal=True)
+            parts.append(f"{delta / 1e6:+.3f} ms vs the count")
+        except (TypeError, AttributeError):
+            pass
+    else:
+        parts.append("start time")
+    detail = []
+    if state:
+        detail.append(state)
+    sigma = getattr(f, "time_uncertainty_ns", None)
+    if sigma is not None:
+        detail.append(f"+/-{sigma / 1e3:.0f} us")
+    text = f"{tc}: corrected"
+    if parts:
+        text += ", " + ", ".join(parts)
+    if detail:
+        text += f" ({', '.join(detail)})"
+    return text
 
 
 def _format_hz(hz: float, grouped: bool = True) -> str:
@@ -204,6 +249,13 @@ def do_info(f, args) -> int:
     print(f"File: {f.path}")
     print(f"  Mode           : {f.mode.value}")
     print(f"  Timestamp      : {_format_timestamp(f)}")
+    if f.num_lines > 1:
+        last = reader.absolute_time_ns(f, f.num_lines - 1)
+        if last:
+            print(f"  Last pulse     : {_format_ns(last)}")
+    correction = _format_time_correction(f)
+    if correction is not None:
+        print(f"  Time           : {correction}")
     print(f"  Pulses         : {f.num_lines:,}")
     print(f"  Duration       : {f.duration:.3f} s")
     print(f"  Sample rate    : {f.sample_rate:,} Hz")

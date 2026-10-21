@@ -22,8 +22,9 @@ pip install audace-display              # matplotlib (static + interactive + PNG
 pip install audace-display[interactive] # + pyqtgraph backend (fast interactive)
 ```
 
-Dependencies: `numpy`, `matplotlib`, `invisensing` >= 1.3.0 (actual trigger
-frequency; O(1) seek and TDMS/SEG-Y streaming since 1.1.0). Optional
+Dependencies: `numpy`, `matplotlib`, `invisensing` >= 1.4.0 (corrected line
+times; actual trigger frequency since 1.3.0; O(1) seek and TDMS/SEG-Y streaming
+since 1.1.0). Optional
 `interactive` extra: `pyqtgraph` + `PyQt5`.
 
 ## Quick start
@@ -174,6 +175,22 @@ every output is unchanged. `audace_display.line_rate_hz(f)` returns the rate
 used. Demod plugins receive it as `trig_frequency_real_hz` (keyword and `meta`
 key); `trig_frequency` stays the requested integer (see
 [docs/DEMOD_PLUGIN.md](docs/DEMOD_PLUGIN.md#requested-vs-actual-trigger-frequency)).
+
+### Corrected absolute times (0.7.0)
+
+The acquisition corrects the drift of the card's oscillator and the shots it
+lost (the card's *time map*), and the recorder writes each HDF5 file's time axis
+into its attributes. The absolute times shown -- `info`'s start and last pulse
+-- are the file's line times (`invisensing.File.line_time_ns`,
+`audace_display.absolute_time_ns(f, i)`), corrected when the file carries the
+axis. `info` says how the times were stamped:
+
+```
+  Time           : cardclock-v1: corrected, +0.098 ms vs the count (tracking, +/-61 us)
+```
+
+Every rate stays the programmed cadence (`line_rate_hz`): the correction moves
+time labels, never the `fs` of a spectrum or a filter.
 
 ## Frequency-band heatmaps
 

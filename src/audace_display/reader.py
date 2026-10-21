@@ -73,6 +73,27 @@ def line_rate_hz(f) -> float:
     return float(f.trig_frequency)
 
 
+def absolute_time_ns(f, i: int) -> Optional[int]:
+    """Absolute time of line ``i`` of ``f``, ns since the Unix epoch, or
+    ``None`` when the file has no anchor (legacy ASCII timestamp).
+
+    This is the time to LABEL with (a start time, an end time): it comes from
+    ``File.line_time_ns``, which on a file stamped from the card's time map
+    (invisensing >= 1.4.0, ``File.time_correction == "cardclock-v1"``) is the
+    **corrected** time of the line -- the card's oscillator drift and its lost
+    shots taken out -- and the count ``anchor + lines`` otherwise. It is never
+    a sampling rate: spectra, filters and Nyquist keep :func:`line_rate_hz`.
+    """
+    acq = getattr(getattr(f, "header", None), "acquisition_ns", 0) or 0
+    if not acq:
+        return None
+    fn = getattr(f, "line_time_ns", None)
+    if callable(fn):
+        return int(fn(i))
+    # A reader without line times (invisensing < 1.3.0): the count.
+    return acq if i == 0 else acq + int(round(i * 1e9 / line_rate_hz(f)))
+
+
 def _chunk_pulses(line_size: int) -> int:
     return max(1, _CHUNK_BYTES // max(line_size * 4, 1))
 

@@ -18,7 +18,9 @@ Programmatic API (stable):
 
 Time axes and sampling rates use the *actual* pulse rate of the file
 (:func:`line_rate_hz`: ``File.trig_frequency_real_hz`` from invisensing >= 1.3.0,
-else the requested ``trig_frequency``).
+else the requested ``trig_frequency``). Absolute times shown (start, end) are
+the file's line times (:func:`absolute_time_ns`): corrected by the card's time
+map when the file carries it (invisensing >= 1.4.0).
 """
 from __future__ import annotations
 
@@ -29,6 +31,7 @@ from .reader import (
     load_columns,
     load_time_matrix,
     line_rate_hz,
+    absolute_time_ns,
     position_step_m,
     time_window_pulses,
     DecimatedResult,
@@ -36,7 +39,7 @@ from .reader import (
 )
 from .demod import load_demodulator, DemodPlugin
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 __all__ = [
     "AudaceDisplayError",
@@ -47,6 +50,7 @@ __all__ = [
     "load_columns",
     "load_time_matrix",
     "line_rate_hz",
+    "absolute_time_ns",
     "position_step_m",
     "time_window_pulses",
     "DecimatedResult",
