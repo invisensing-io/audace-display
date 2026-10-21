@@ -15,6 +15,10 @@ CLI: ``audace-display FILE`` (auto) or subcommands ``info`` / ``heatmap`` /
 Programmatic API (stable):
 
     from audace_display import load_decimated, load_columns, resolve_channel
+
+Time axes and sampling rates use the *actual* pulse rate of the file
+(:func:`line_rate_hz`: ``File.trig_frequency_real_hz`` from invisensing >= 1.3.0,
+else the requested ``trig_frequency``).
 """
 from __future__ import annotations
 
@@ -24,6 +28,7 @@ from .reader import (
     load_decimated,
     load_columns,
     load_time_matrix,
+    line_rate_hz,
     position_step_m,
     time_window_pulses,
     DecimatedResult,
@@ -31,7 +36,7 @@ from .reader import (
 )
 from .demod import load_demodulator, DemodPlugin
 
-__version__ = "0.5.2"
+__version__ = "0.6.0"
 
 __all__ = [
     "AudaceDisplayError",
@@ -41,6 +46,7 @@ __all__ = [
     "load_decimated",
     "load_columns",
     "load_time_matrix",
+    "line_rate_hz",
     "position_step_m",
     "time_window_pulses",
     "DecimatedResult",

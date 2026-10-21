@@ -22,9 +22,9 @@ pip install audace-display              # matplotlib (static + interactive + PNG
 pip install audace-display[interactive] # + pyqtgraph backend (fast interactive)
 ```
 
-Dependencies: `numpy`, `matplotlib`, `invisensing` (>= 1.1.0 recommended for the
-O(1) seek and TDMS/SEG-Y streaming; works from 1.0.0). Optional `interactive`
-extra: `pyqtgraph` + `PyQt5`.
+Dependencies: `numpy`, `matplotlib`, `invisensing` >= 1.3.0 (actual trigger
+frequency; O(1) seek and TDMS/SEG-Y streaming since 1.1.0). Optional
+`interactive` extra: `pyqtgraph` + `PyQt5`.
 
 ## Quick start
 
@@ -62,7 +62,8 @@ audace-display acq.dat --save out.png                # headless PNG
 
 For a **raw** file, the default is an **animated oscilloscope**: each frame draws
 the current line (pulse) -- amplitude vs distance along the fiber -- and the
-cursor **advances at `trigger_frequency` lines/second** (real time), **looping**.
+cursor **advances at the actual pulse rate** in lines/second (real time, see
+[Actual trigger frequency](#actual-trigger-frequency)), **looping**.
 At high rates, lines are skipped to stay real-time (the pace stays exact, locked
 to the clock). Optimized: O(1) per-line seek (invisensing >= 1.1.0), "peak"
 decimation of large lines, reused curve, frozen axes. For maximum smoothness,
@@ -78,7 +79,7 @@ audace-display scope acq.dat --line 1000 --save frame.png      # 1 frozen line (
 
 | Option | Effect |
 |--------|--------|
-| `--speed F`   | Playback speed (1.0 = real time = `trig_frequency` lines/s) |
+| `--speed F`   | Playback speed (1.0 = real time = actual pulse rate, in lines/s) |
 | `--fps N`     | Render frames/s (default 30) |
 | `--line N`    | Frozen line exported with `--save` (default 0) |
 | `--max-points N` | Max points drawn per line (peak decimation). Default 4000 |
@@ -148,10 +149,36 @@ and aggregated on the fly into a `--max-time-bins x --max-space-bins` grid
 `.dat` and `.hdf5` stream natively; `.tdms` and `.sgy` also stream with
 `invisensing >= 1.1.0`. `--start-time` seeks directly (O(1) seek) with 1.1.0.
 
+## Actual trigger frequency
+
+A card fires on an **integer divider of its clock**, so a requested trigger
+frequency that does not divide the clock is not met exactly: on a PCIe7821
+(250 MHz clock), 75,000 Hz requested gives 250 MHz / 3,333 = 75,007.5008 Hz
+(+100 ppm, i.e. 0.36 s per hour). Recent HDF5 files carry the actual value
+(`trig_frequency_real_hz`, `trig_clock_hz`, `trig_period_ticks`), exposed by
+`invisensing >= 1.3.0` as `File.trig_frequency_real_hz`.
+
+Since 0.6.0 every line <-> time conversion uses the **actual** rate: time axes
+(`heatmap`, `bandheatmaps`, `trace`, `inspect`), the `--start-time` /
+`--duration` window, the sampling rate `fs` of `fft` / `inspect` / the band
+filters, Nyquist, and the `scope` playback speed and `t =` label. `info` shows
+both when they differ:
+
+```
+  Trig frequency : 75,000 Hz (actual 75,007.5008 Hz, +100.0 ppm)
+```
+
+For an exact frequency (e.g. 2,000 Hz), a file without the attributes (`.dat`,
+older HDF5) or an older `invisensing`, the actual rate is the requested one and
+every output is unchanged. `audace_display.line_rate_hz(f)` returns the rate
+used. Demod plugins receive it as `trig_frequency_real_hz` (keyword and `meta`
+key); `trig_frequency` stays the requested integer (see
+[docs/DEMOD_PLUGIN.md](docs/DEMOD_PLUGIN.md#requested-vs-actual-trigger-frequency)).
+
 ## Frequency-band heatmaps
 
 `bandheatmaps` decomposes the **temporal** frequency axis (the FFT along the
-pulses, Nyquist = `trig_frequency / 2`) into up to 3 contiguous bands and renders
+pulses, Nyquist = actual pulse rate / 2) into up to 3 contiguous bands and renders
 one distance x time waterfall per band, plus the global heatmap. A band panel
 band-pass filters the signal to its `[f_lo, f_hi)` range, then colors each time
 bin by its **energy** (temporal RMS; or variance / log-variance with
@@ -242,9 +269,10 @@ See [`docs/DEMOD_PLUGIN.md`](docs/DEMOD_PLUGIN.md#per-invocation-options-plugin_
   For interleaved I/Q, `chunk[:, 0::2]` is I and `chunk[:, 1::2]` is Q. *Cast to
   float before arithmetic — integer dtypes overflow silently.*
 - **kwargs** (keyword-only, all optional — declare only what you use):
-  `sample_rate` (intra-pulse Hz), `trig_frequency` (pulse rate Hz), `line_size`,
+  `sample_rate` (intra-pulse Hz), `trig_frequency` (requested pulse rate Hz),
+  `trig_frequency_real_hz` (actual pulse rate Hz, since 0.6.0), `line_size`,
   and `meta` (full header dict: `positions_per_line`, `range_v`, `flags`,
-  `mode`, `num_lines`, …).
+  `mode`, `num_lines`, `trig_frequency_real_hz`, …).
 - **Output**: a 2-D `(rows, positions)` array — `rows` **must** match the input
   (don't resample time), `positions` **constant** across chunks. Cast to
   `float32` for display.

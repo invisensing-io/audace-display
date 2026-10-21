@@ -173,6 +173,31 @@ def _format_timestamp(f) -> str:
     return f.timestamp.strip() or "(none)"
 
 
+def _format_hz(hz: float, grouped: bool = True) -> str:
+    """``75007.50075`` -> ``'75,007.5008'``; an integral rate keeps no decimals
+    (``1000.0`` -> ``'1,000'``, or ``'1000'`` with ``grouped=False``)."""
+    return f"{hz:{',' if grouped else ''}.4f}".rstrip("0").rstrip(".")
+
+
+def _format_trig_frequency(f) -> str:
+    """Requested trigger frequency, plus the actual one when they differ.
+
+    A card fires on an integer divider of its clock: 75,000 Hz requested on a
+    PCIe7821 gives 250 MHz / 3,333 = 75,007.5008 Hz, which the file carries
+    (invisensing >= 1.3.0). An exact frequency (or a file / library without the
+    actual value) prints exactly as before: ``'75,000 Hz'``.
+    """
+    requested = f.trig_frequency
+    actual = reader.line_rate_hz(f)
+    text = f"{requested:,} Hz"
+    if actual != float(requested):
+        detail = f"actual {_format_hz(actual)} Hz"
+        if requested:
+            detail += f", {(actual / requested - 1.0) * 1e6:+.1f} ppm"
+        text += f" ({detail})"
+    return text
+
+
 def do_info(f, args) -> int:
     flags = _decode_flags(f.flags)
     d_step = reader.position_step_m(f)
@@ -182,7 +207,7 @@ def do_info(f, args) -> int:
     print(f"  Pulses         : {f.num_lines:,}")
     print(f"  Duration       : {f.duration:.3f} s")
     print(f"  Sample rate    : {f.sample_rate:,} Hz")
-    print(f"  Trig frequency : {f.trig_frequency:,} Hz")
+    print(f"  Trig frequency : {_format_trig_frequency(f)}")
     print(f"  Line size      : {f.line_size:,} samples/pulse")
     print(f"  Positions      : {f.positions_per_line:,} per pulse")
     print(f"  Spatial step   : {d_step:.3f} m")
@@ -298,7 +323,8 @@ def do_bandheatmaps(f, args) -> int:
     or its temporal variance when ``--variance`` is set.
     """
     canonical, resolver, base_label, is_ang = resolve_channel(args.channel, f.mode)
-    trig = f.trig_frequency
+    # Actual pulse rate: the band filters' fs and Nyquist.
+    trig = reader.line_rate_hz(f)
     bands = _parse_bands(args, nyquist=trig / 2.0)
 
     # The whole time series must be resident for the temporal FFT: warn (like
@@ -529,7 +555,8 @@ def do_scope(f, args) -> int:
     """Oscilloscope: replays the lines (pulses) in real time, looping.
 
     Each frame draws the current line (amplitude vs distance); the cursor
-    advances at ``trig_frequency * speed`` lines/s. With ``--save``, exports a
+    advances at ``line_rate_hz(f) * speed`` lines/s (the actual pulse rate,
+    which is also the clock of the ``t =`` label). With ``--save``, exports a
     frozen line to PNG.
     """
     if not hasattr(f, "seek_lines"):
@@ -537,7 +564,7 @@ def do_scope(f, args) -> int:
             "oscilloscope mode requires invisensing >= 1.1.0 (O(1) per-line seek)."
         )
     canonical, resolver, label, _ = resolve_channel(args.channel, f.mode)
-    trig = f.trig_frequency
+    trig = reader.line_rate_hz(f)
     d_step = reader.position_step_m(f)
     length_m = f.positions_per_line * d_step
 
@@ -559,7 +586,8 @@ def do_scope(f, args) -> int:
     ylim = (lo - pad, hi + pad)
 
     title = args.title or (
-        f"{f.path.name} -- {canonical} (oscilloscope x{args.speed:g}, {trig} lines/s)"
+        f"{f.path.name} -- {canonical} (oscilloscope x{args.speed:g}, "
+        f"{_format_hz(trig, grouped=False)} lines/s)"
     )
 
     if args.save:  # frozen frame -> PNG
@@ -752,7 +780,8 @@ def _add_scope_opts(p: argparse.ArgumentParser) -> None:
     p.add_argument("--fps", type=int, default=30,
                    help="Render frames/s (default 30). Higher = smoother, more CPU.")
     p.add_argument("--speed", type=float, default=1.0,
-                   help="Playback speed (1.0 = real time = trig_frequency lines/s).")
+                   help="Playback speed (1.0 = real time = actual pulse rate, "
+                        "in lines/s).")
     p.add_argument("--line", type=int, default=0,
                    help="Line to freeze with --save (default 0).")
     p.add_argument("--max-points", type=int, default=4000,
@@ -849,7 +878,7 @@ Examples:
 _SCOPE_DESC = """\
 Oscilloscope: replays the lines (pulses) in REAL TIME and LOOPING. Each frame
 draws the current line (amplitude vs distance along the fiber); the cursor
-advances at trig_frequency * --speed lines/s. At high rates, lines are skipped
+advances at the actual pulse rate * --speed lines/s. At high rates, lines are skipped
 to stay real-time. This is the default mode for a raw file.
 
 With --save, a single line (--line N) is exported to PNG (frozen).

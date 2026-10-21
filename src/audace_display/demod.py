@@ -40,6 +40,14 @@ Guarantees provided to the plugin
 - ``chunk`` is the raw buffer ``(rows, line_size)`` as returned by
   ``invisensing.File.read_lines`` (the file's dtype).
 - ``meta`` is a dict of header metadata (see :func:`_build_meta`).
+- ``trig_frequency`` is the **requested** trigger frequency (int, as in the
+  header). The **actual** pulse rate -- a card fires on an integer divider of
+  its clock, so 75,000 Hz requested gives 75,007.5008 Hz on a PCIe7821 -- is
+  ``meta["trig_frequency_real_hz"]`` (float, since audace-display 0.6.0), also
+  passed as the ``trig_frequency_real_hz`` keyword to a plugin that declares
+  it. It equals ``float(trig_frequency)`` for an exact frequency, an older
+  file, or an invisensing older than 1.3.0. A plugin that ignores it keeps
+  working unchanged.
 
 Output expectations
 -------------------
@@ -61,6 +69,7 @@ from typing import Callable
 import numpy as np
 
 from ._errors import AudaceDisplayError
+from .reader import line_rate_hz
 
 Transform = Callable[[np.ndarray], np.ndarray]
 
@@ -76,10 +85,16 @@ class DemodPlugin:
 
 
 def _build_meta(f) -> dict:
-    """Metadata passed to the plugin."""
+    """Metadata passed to the plugin.
+
+    ``trig_frequency`` is the requested frequency (int, unchanged);
+    ``trig_frequency_real_hz`` (float, added in 0.6.0) is the actual pulse rate
+    (:func:`audace_display.reader.line_rate_hz`).
+    """
     return {
         "sample_rate": f.sample_rate,
         "trig_frequency": f.trig_frequency,
+        "trig_frequency_real_hz": line_rate_hz(f),
         "line_size": f.line_size,
         "positions_per_line": f.positions_per_line,
         "sample_size": f.sample_size,
@@ -151,6 +166,8 @@ def load_demodulator(script_path: str | Path, f, plugin_args=None) -> DemodPlugi
     init_kwargs = {
         "sample_rate": f.sample_rate,
         "trig_frequency": f.trig_frequency,
+        # Reaches only a plugin that declares it (or takes **kwargs).
+        "trig_frequency_real_hz": meta["trig_frequency_real_hz"],
         "line_size": f.line_size,
         "meta": meta,
         "plugin_args": list(plugin_args or []),

@@ -46,6 +46,33 @@ def position_step_m(f, n_positions: Optional[int] = None) -> float:
     return f.distance / max(n, 1)
 
 
+def line_rate_hz(f) -> float:
+    """Actual pulse (line) rate of ``f``, in Hz.
+
+    This is the rate every line <-> second conversion uses (time axes, the
+    ``--start-time`` / ``--duration`` window, ``fs`` of the spectra and band
+    filters, Nyquist, the oscilloscope playback speed).
+
+    A card triggers on an integer divider of its clock, so a requested
+    frequency that does not divide the clock is not met exactly (PCIe7821:
+    75,000 Hz requested -> 250 MHz / 3,333 = 75,007.5008 Hz). invisensing >= 1.3.0
+    exposes the real value as ``File.trig_frequency_real_hz`` (from the card
+    timing an HDF5 file carries -- ``trig_clock_hz`` / ``trig_period_ticks``,
+    ``trig_frequency_real_hz`` -- else the requested frequency). Older
+    invisensing releases do not have it: fall back to the requested
+    ``trig_frequency``, which is what 0.5.x used everywhere.
+
+    For an exact frequency both values are the same float, so every derived
+    quantity is bit-identical to the nominal computation.
+    """
+    real = getattr(f, "trig_frequency_real_hz", None)
+    if real is not None:
+        real = float(real)
+        if math.isfinite(real) and real > 0.0:
+            return real
+    return float(f.trig_frequency)
+
+
 def _chunk_pulses(line_size: int) -> int:
     return max(1, _CHUNK_BYTES // max(line_size * 4, 1))
 
@@ -53,7 +80,7 @@ def _chunk_pulses(line_size: int) -> int:
 def _pulse_range(
     f, start_time: Optional[float], duration: Optional[float]
 ) -> tuple[int, int]:
-    trig = f.trig_frequency
+    trig = line_rate_hz(f)
     total = f.num_lines
     p0 = 0 if start_time is None else int(start_time * trig)
     p0 = max(0, min(p0, total))
@@ -194,7 +221,7 @@ def load_decimated(
         raise AudaceDisplayError("no data read.")
 
     data = acc.result()
-    trig = f.trig_frequency
+    trig = line_rate_hz(f)
     d_step = geom["d_step"]
     return DecimatedResult(
         data=data,
@@ -216,7 +243,7 @@ class TimeMatrixResult:
     """
 
     data: np.ndarray                # (n_pulses, n_space) float32
-    trig: float                     # effective pulse rate (Hz)
+    trig: float                     # actual pulse rate (Hz), see line_rate_hz
     t_extent: tuple[float, float]   # (t0, t1) seconds
     d_extent: tuple[float, float]   # (d0, d1) meters
     n_positions: int                # positions available after transform
@@ -292,7 +319,7 @@ def load_time_matrix(
         np.vstack(parts) if parts
         else np.empty((0, geom["n_space"]), np.float32)
     )
-    trig = f.trig_frequency
+    trig = line_rate_hz(f)
     d_step = geom["d_step"]
     return TimeMatrixResult(
         data=data,
@@ -315,8 +342,10 @@ def load_columns(
 ) -> tuple[np.ndarray, float]:
     """Full-resolution time series at columns ``indices``.
 
-    Returns ``(data (rows, len(indices)) float32, effective_trig_hz)``. RAM is
-    ~ ``rows * len(indices) * 4`` (small: a handful of columns).
+    Returns ``(data (rows, len(indices)) float32, effective_trig_hz)``, where
+    ``effective_trig_hz`` is the actual pulse rate (:func:`line_rate_hz`)
+    divided by ``subsample_time``: the ``fs`` of any spectrum of ``data``. RAM
+    is ~ ``rows * len(indices) * 4`` (small: a handful of columns).
     """
     if not indices:
         raise AudaceDisplayError("no position selected.")
@@ -346,5 +375,5 @@ def load_columns(
     )
     if subsample_time > 1:
         data = data[::subsample_time]
-    eff_trig = f.trig_frequency / max(subsample_time, 1)
+    eff_trig = line_rate_hz(f) / max(subsample_time, 1)
     return data, eff_trig

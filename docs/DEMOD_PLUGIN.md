@@ -114,7 +114,8 @@ the **same keyword-only** arguments:
 | kwarg            | Type  | Meaning |
 |------------------|-------|---------|
 | `sample_rate`    | int   | ADC sample rate within a pulse (Hz) — the *intra-pulse* (fast-time / distance) rate |
-| `trig_frequency` | int   | Pulse repetition rate (Hz) — the *inter-pulse* (slow-time / temporal) rate, i.e. one row per `1/trig_frequency` s |
+| `trig_frequency` | int   | **Requested** pulse repetition rate (Hz) — the *inter-pulse* (slow-time / temporal) rate, as written in the header |
+| `trig_frequency_real_hz` | float | **Actual** pulse repetition rate (Hz): one row every `1/trig_frequency_real_hz` s (since 0.6.0, see [Requested vs actual trigger frequency](#requested-vs-actual-trigger-frequency)) |
 | `line_size`      | int   | Samples per pulse (the width of `chunk`) |
 | `meta`           | dict  | Full header metadata (see below) |
 | `plugin_args`    | list[str] | Extra command-line args the CLI didn't recognise, forwarded verbatim (see [Per-invocation options](#per-invocation-options-plugin_args)) |
@@ -175,7 +176,8 @@ flags your kwargs don't expose:
 | Key                   | Meaning |
 |-----------------------|---------|
 | `sample_rate`         | ADC sample rate (Hz) |
-| `trig_frequency`      | Pulse repetition rate (Hz) |
+| `trig_frequency`      | Requested pulse repetition rate (Hz, int) |
+| `trig_frequency_real_hz` | Actual pulse repetition rate (Hz, float) — since 0.6.0 |
 | `line_size`           | Samples per pulse |
 | `positions_per_line`  | Spatial positions per pulse (for interleaved I/Q, `line_size / 2`) |
 | `sample_size`         | Bytes per sample (2 = int16, 4 = int32/float32) |
@@ -184,6 +186,28 @@ flags your kwargs don't expose:
 | `mode`                | File mode string (`"raw"`, `"iq"`, `"arctan_magnitude"`, `"phase"`) |
 | `timestamp`           | Acquisition start timestamp |
 | `num_lines`           | Total pulses in the file |
+
+### Requested vs actual trigger frequency
+
+A card fires on an **integer divider of its clock**. A requested frequency that
+does not divide the clock is not met exactly: on a PCIe7821 (250 MHz clock),
+75,000 Hz requested gives 250 MHz / 3,333 = **75,007.5008 Hz** (+100 ppm).
+Recent HDF5 files carry the actual value, read by `invisensing >= 1.3.0`.
+
+- `trig_frequency` stays the **requested** integer (unchanged contract).
+- `trig_frequency_real_hz` (keyword and `meta` key, added in 0.6.0) is the
+  **actual** rate. It equals `float(trig_frequency)` for an exact frequency, an
+  older file, or an `invisensing` older than 1.3.0 — so it is always safe to use.
+
+Use `trig_frequency_real_hz` whenever you convert rows to seconds or a cutoff
+in Hz to a per-row coefficient for your own analysis. A plugin that must
+reproduce the production Demodulation module bit for bit should keep
+`trig_frequency`: that module's filters run at the requested integer.
+
+Backward compatible: a plugin that does not declare `trig_frequency_real_hz`
+behaves exactly as with 0.5.x — the keyword is filtered out of a signature that
+does not accept it (a `**kwargs` catch-all receives it and may ignore it), and
+the extra `meta` key changes nothing for code that does not read it.
 
 ---
 
@@ -311,10 +335,11 @@ class Demodulator:
     OUTPUT_LABEL = "phase, LP filtered (rad)"
     IS_ANGULAR = True
 
-    def __init__(self, *, trig_frequency, line_size, meta):
-        # one-pole low-pass, cutoff 10 Hz on the temporal (slow-time) axis
+    def __init__(self, *, trig_frequency_real_hz, line_size, meta):
+        # one-pole low-pass, cutoff 10 Hz on the temporal (slow-time) axis;
+        # the actual pulse rate sets the time step between rows
         fc = 10.0
-        dt = 1.0 / trig_frequency
+        dt = 1.0 / trig_frequency_real_hz
         self.alpha = np.float32(dt / (dt + 1.0 / (2 * np.pi * fc)))
         self.prev = None             # last filtered pulse, shape (positions,)
 
@@ -424,6 +449,8 @@ stays numpy-only.
 **Can the plugin return complex values?** No — return a real field. Compute
 magnitude / phase / real part yourself.
 
-**Do I need `invisensing >= 1.1.0`?** For `demod` specifically, any 1.x works
-(it reads sequentially). The 1.1.0 O(1) seek matters for `scope` and fast
+**Do I need `invisensing >= 1.1.0`?** audace-display 0.6.0 requires
+`invisensing >= 1.3.0` (actual trigger frequency). For `demod` specifically,
+any 1.x works (it reads sequentially; `trig_frequency_real_hz` then equals the
+requested frequency). The 1.1.0 O(1) seek matters for `scope` and fast
 `--start-time` seeking, not for the demod streaming pass.
