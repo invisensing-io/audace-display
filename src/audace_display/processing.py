@@ -37,6 +37,12 @@ def to_log_variance(var: np.ndarray) -> np.ndarray:
     Empty/zero bins are floored to ``max(var)*1e-12`` (≈ 120 dB of dynamic
     range below the peak) so the result stays finite; the floor is well below
     anything the percentile auto-scaling keeps, so it never skews the colorbar.
+
+    A display transform only, relative to the field's own maximum: it is NOT
+    the console's Log scale of the archive exports (content type 28
+    ``viz_logvar``, ``log10(1 + max(variance, 0))``, which
+    ``invisensing.File.get_variance`` undoes as ``10^v − 1``). Never label
+    an array computed here as content type 28.
     """
     var = np.asarray(var, dtype=np.float64)
     mx = float(var.max()) if var.size else 1.0

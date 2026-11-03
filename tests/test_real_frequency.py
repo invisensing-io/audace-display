@@ -1,7 +1,7 @@
 """Actual (real) trigger frequency -- audace-display 0.6.0.
 
 A card fires on an integer divider of its clock: 75,000 Hz requested on a
-PCIe7821 gives 250 MHz / 3,333 = 75,007.5008 Hz. invisensing >= 1.3.0 exposes it
+250 MHz clock gives 250 MHz / 3,333 = 75,007.5008 Hz. invisensing >= 1.3.0 exposes it
 as ``File.trig_frequency_real_hz`` (plus ``trig_clock_hz``, ``trig_period_ticks``,
 ``trig_frequency_is_exact``, ``line_time_ns``). Every line <-> time conversion of
 audace-display must use it; an exact frequency, an old file or an older

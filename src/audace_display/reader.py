@@ -54,8 +54,8 @@ def line_rate_hz(f) -> float:
     filters, Nyquist, the oscilloscope playback speed).
 
     A card triggers on an integer divider of its clock, so a requested
-    frequency that does not divide the clock is not met exactly (PCIe7821:
-    75,000 Hz requested -> 250 MHz / 3,333 = 75,007.5008 Hz). invisensing >= 1.3.0
+    frequency that does not divide the clock is not met exactly (on a 250 MHz
+    clock: 75,000 Hz requested -> 250 MHz / 3,333 = 75,007.5008 Hz). invisensing >= 1.3.0
     exposes the real value as ``File.trig_frequency_real_hz`` (from the card
     timing an HDF5 file carries -- ``trig_clock_hz`` / ``trig_period_ticks``,
     ``trig_frequency_real_hz`` -- else the requested frequency). Older

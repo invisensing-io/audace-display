@@ -233,7 +233,7 @@ def _format_trig_frequency(f) -> str:
     """Requested trigger frequency, plus the actual one when they differ.
 
     A card fires on an integer divider of its clock: 75,000 Hz requested on a
-    PCIe7821 gives 250 MHz / 3,333 = 75,007.5008 Hz, which the file carries
+    250 MHz clock gives 250 MHz / 3,333 = 75,007.5008 Hz, which the file carries
     (invisensing >= 1.3.0). An exact frequency (or a file / library without the
     actual value) prints exactly as before: ``'75,000 Hz'``.
     """
@@ -279,20 +279,44 @@ def _format_compression(f) -> Optional[str]:
     return comp + (f" ({', '.join(detail)})" if detail else "")
 
 
+def _format_quantity(f) -> Optional[str]:
+    """``phase (rad)``, ``phase+amplitude (rad+count)``: what the content type
+    says the samples are, or ``None`` when it does not say."""
+    quantity = getattr(f, "quantity", None)
+    if not quantity:
+        return None
+    unit = getattr(f, "unit", None)
+    return f"{quantity} ({unit})" if unit else quantity
+
+
 def do_info(f, args) -> int:
     content_type, content_name = _content_type(f)
     # A file carrying a content type is described by it; a legacy capture
     # (content_type 0) keeps exactly the output it always had.
     flags = _decode_flags(f.flags, legacy=content_type == 0)
     d_step = reader.position_step_m(f)
+    format_version = getattr(f, "format_version", 0) or 0
     print(f"File: {f.path}")
     print(f"  Mode           : {f.mode.value}")
     if content_type != 0:
-        mozart = " (Mozart)" if content_name == "sw_mozart" else ""
+        mozart = " (Mozart)" if content_name in ("sw_mozart", "sw_mozart_plus") else ""
         print(f"  Content type   : {content_name}{mozart}")
+        quantity = _format_quantity(f)
+        if quantity is not None:
+            print(f"  Quantity       : {quantity}")
+    source = getattr(f, "source_content_type", None)
+    if source is not None:
+        from invisensing import content
+        info = content.info(source)
+        print(f"  Source column  : {info.tag if info else source} ({source})")
+    if format_version:
+        print(f"  Format version : {format_version}")
     card = getattr(f, "card", None)
     if card:
         print(f"  Card           : {card}")
+    sibling = getattr(f, "sibling_path", None)
+    if sibling is not None:
+        print(f"  Other half     : {sibling}")
     print(f"  Timestamp      : {_format_timestamp(f)}")
     if f.num_lines > 1:
         last = reader.absolute_time_ns(f, f.num_lines - 1)
@@ -302,12 +326,17 @@ def do_info(f, args) -> int:
     if correction is not None:
         print(f"  Time           : {correction}")
     print(f"  Pulses         : {f.num_lines:,}")
-    print(f"  Duration       : {f.duration:.3f} s")
+    duration_s = getattr(f, "duration_s", None)
+    written = f" (file: {duration_s} s)" if duration_s is not None else ""
+    print(f"  Duration       : {f.duration:.3f} s{written}")
     print(f"  Sample rate    : {f.sample_rate:,} Hz")
     print(f"  Trig frequency : {_format_trig_frequency(f)}")
     print(f"  Line size      : {f.line_size:,} samples/pulse")
     print(f"  Positions      : {f.positions_per_line:,} per pulse")
     print(f"  Spatial step   : {d_step:.3f} m")
+    temporal = getattr(f, "temporal_step_s", None)
+    if format_version and temporal:
+        print(f"  Line period    : {temporal * 1e3:.6g} ms")
     print(f"  Fiber length   : {f.distance:.2f} m")
     print(f"  Trigger delay  : {f.trigger_delay:,} m")
     print(f"  ADC range      : {f.range:.3f} V")
@@ -319,7 +348,7 @@ def do_info(f, args) -> int:
         print(f"  Compression    : {compression}")
 
     canonical = DEFAULT_CHANNEL[f.mode]
-    _, resolver, _, _ = resolve_channel(canonical, f.mode)
+    _, resolver, _, _ = resolve_channel(canonical, f.mode, f)
     n_stat = min(1000, f.num_lines)
     if n_stat > 0:
         buf = f.read_lines(n_stat)
@@ -362,7 +391,7 @@ def _decode_flags(flags: int, legacy: bool = True) -> str:
 
 
 def do_heatmap(f, args) -> int:
-    canonical, resolver, label, is_ang = resolve_channel(args.channel, f.mode)
+    canonical, resolver, label, is_ang = resolve_channel(args.channel, f.mode, f)
     _render_heatmap(
         f, args, _channel_transform(f, resolver), label, is_ang,
         subtitle=f"channel={canonical}",
@@ -426,7 +455,7 @@ def do_bandheatmaps(f, args) -> int:
     heatmap. The global panel (always shown) is the plain channel heatmap (mean),
     or its temporal variance when ``--variance`` is set.
     """
-    canonical, resolver, base_label, is_ang = resolve_channel(args.channel, f.mode)
+    canonical, resolver, base_label, is_ang = resolve_channel(args.channel, f.mode, f)
     # Actual pulse rate: the band filters' fs and Nyquist.
     trig = reader.line_rate_hz(f)
     bands = _parse_bands(args, nyquist=trig / 2.0)
@@ -519,7 +548,7 @@ def do_bandheatmaps(f, args) -> int:
 
 
 def do_trace(f, args) -> int:
-    canonical, resolver, label, _ = resolve_channel(args.channel, f.mode)
+    canonical, resolver, label, _ = resolve_channel(args.channel, f.mode, f)
     n_pos = f.positions_per_line
     d_step = reader.position_step_m(f)
     if args.position is None:
@@ -561,7 +590,7 @@ def do_trace(f, args) -> int:
 
 
 def do_fft(f, args) -> int:
-    canonical, resolver, label, _ = resolve_channel(args.channel, f.mode)
+    canonical, resolver, label, _ = resolve_channel(args.channel, f.mode, f)
     n_pos = f.positions_per_line
     d_step = reader.position_step_m(f)
 
@@ -667,7 +696,7 @@ def do_scope(f, args) -> int:
         raise AudaceDisplayError(
             "oscilloscope mode requires invisensing >= 1.1.0 (O(1) per-line seek)."
         )
-    canonical, resolver, label, _ = resolve_channel(args.channel, f.mode)
+    canonical, resolver, label, _ = resolve_channel(args.channel, f.mode, f)
     trig = reader.line_rate_hz(f)
     d_step = reader.position_step_m(f)
     length_m = f.positions_per_line * d_step
@@ -749,7 +778,7 @@ def _inspect_source(f, args):
         plugin = load_demodulator(args.script, f, plugin_args)
         return plugin.transform, plugin.label, f"demod={args.script}", probe.shape[1]
 
-    canonical, resolver, label, _ = resolve_channel(args.channel, f.mode)
+    canonical, resolver, label, _ = resolve_channel(args.channel, f.mode, f)
     return _channel_transform(f, resolver), label, f"channel={canonical}", f.positions_per_line
 
 
@@ -837,7 +866,7 @@ def _open_and_run(do_func, args) -> int:
 
 
 def _add_io(p: argparse.ArgumentParser) -> None:
-    p.add_argument("path", help="File (.dat / .hdf5 / .tdms / .sgy)")
+    p.add_argument("path", help="File (.dat / .h5 / .hdf5 / .tdms / .sgy)")
     p.add_argument("--save", metavar="PNG", default=None,
                    help="Save to PNG (otherwise interactive display).")
     p.add_argument("--dpi", type=int, default=150, help="PNG DPI (default 150).")
@@ -866,7 +895,9 @@ def _add_variance_opt(p: argparse.ArgumentParser) -> None:
     p.add_argument("--variance", choices=["linear", "log"], default=None,
                    metavar="{linear,log}",
                    help="Color each time bin by its temporal VARIANCE instead of "
-                        "the mean ('log' = log10 of the variance). Off by default; "
+                        "the mean ('log' = log10 of the variance, floored 120 dB "
+                        "below its maximum: a display scale, not the console's "
+                        "log10(1 + variance) of archive exports). Off by default; "
                         "overrides --reduce and --db.")
 
 
@@ -913,8 +944,9 @@ def _add_trace_opts(p: argparse.ArgumentParser) -> None:
 _DESCRIPTION = """\
 audace-display -- visualization of Audace DAS acquisition files.
 
-Reads any file produced by the Filewriter (.dat / .hdf5 / .tdms / .sgy) via the
-"invisensing" library, auto-detects the mode, and shows:
+Reads any file produced by the Filewriter (.dat / .h5 / .hdf5 / .tdms / .sgy)
+via the "invisensing" library, auto-detects what it holds from its content
+type, and shows:
     demodulated file  ->  heatmap (distance x time waterfall)
     raw file          ->  animated oscilloscope (lines in real time, looping)
 
@@ -957,9 +989,17 @@ Examples
 
 Channels available per file mode:
   raw               raw
+  phase             phase
+  amplitude         magnitude (the card's, in volts)
+  arctan            arctan
+  i / q             i / q
+  custom            samples (a script's output, as stored)
+  variance          variance, log_variance (log10(1 + variance))
+  log_variance      variance, log_variance
+  Files written before the Audace data format v1 may hold pairs:
   iq                i, q, magnitude (|IQ|), phase_wrapped (arg(I+jQ))
   arctan_magnitude  arctan, magnitude (sqrt(I^2+Q^2))
-  phase             phase
+  phase_amplitude   phase, magnitude
   (aliases: mag/amp -> magnitude, atan -> arctan, angle -> phase_wrapped)
 
 Large files (200 MB - 10 GB): streamed, decimated reading, bounded RAM.
@@ -1169,7 +1209,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_info = _subparser(sub, "info",
                         help="Metadata + stats of the default channel.",
                         description=_INFO_DESC, epilog=_INFO_EPILOG)
-    p_info.add_argument("path", help="File (.dat / .hdf5 / .tdms / .sgy)")
+    p_info.add_argument("path", help="File (.dat / .h5 / .hdf5 / .tdms / .sgy)")
     p_info.set_defaults(func=lambda a: _open_and_run(do_info, a))
 
     # heatmap

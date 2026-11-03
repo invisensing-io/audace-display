@@ -42,7 +42,7 @@ Guarantees provided to the plugin
 - ``meta`` is a dict of header metadata (see :func:`_build_meta`).
 - ``trig_frequency`` is the **requested** trigger frequency (int, as in the
   header). The **actual** pulse rate -- a card fires on an integer divider of
-  its clock, so 75,000 Hz requested gives 75,007.5008 Hz on a PCIe7821 -- is
+  its clock, so 75,000 Hz requested gives 75,007.5008 Hz on a 250 MHz clock -- is
   ``meta["trig_frequency_real_hz"]`` (float, since audace-display 0.6.0), also
   passed as the ``trig_frequency_real_hz`` keyword to a plugin that declares
   it. It equals ``float(trig_frequency)`` for an exact frequency, an older
@@ -103,6 +103,14 @@ def _build_meta(f) -> dict:
         "mode": f.mode.value,
         "timestamp": f.timestamp,
         "num_lines": f.num_lines,
+        # Audace data format v1 (invisensing >= 1.4.0): what the samples are,
+        # the card code, the steps.
+        "content_type": f.content_type,
+        "content_type_name": f.content_type_name,
+        "dtype": str(f.dtype),
+        "card": f.card,
+        "spatial_step_m": f.spatial_step_m,
+        "temporal_step_s": f.temporal_step_s,
     }
 
 

@@ -3,7 +3,7 @@
 The content type is the reference for every file that carries one: ``info``
 prints it and no longer names a pipeline from the flags (the SCHUBERT flag is
 deprecated). A legacy capture (content type 0) prints exactly what it always
-did. Also: the card tag, the HDF5 compression, the UTC offset of absolute
+did. Also: the card code, the HDF5 compression, the UTC offset of absolute
 times, the uint16 magnitude column, and the ``inspect --script`` probe.
 """
 from __future__ import annotations
@@ -96,11 +96,12 @@ def test_mozart_comes_from_the_content_type_only(tmp_path, capsys):
 
 
 @needs_content_type_sdk
-def test_the_card_of_a_dual_card_run_is_printed(tmp_path, capsys):
+@pytest.mark.parametrize("code", ["p18", "p21", "s125", "s500"])
+def test_the_card_code_is_printed(tmp_path, capsys, code):
     path = _dat(tmp_path / "c.dat", np.zeros((4, 8), np.int16),
-                flags=0, content_type=1, card="pcie7818")
+                flags=0, content_type=1, card=code)
     out = _info(path, capsys)
-    assert "  Card           : pcie7818\n" in out
+    assert f"  Card           : {code}\n" in out
 
 
 @needs_content_type_sdk
@@ -162,8 +163,11 @@ def test_a_split_magnitude_child_shows_its_real_values(tmp_path, capsys):
                 flags=FLAG_DEMODULATED | FLAG_UNSIGNED, content_type=5)
     volts = MAGNITUDES.astype(np.float64) * (1.0 / 32768.0)  # 1 V range
     with File(str(path)) as f:
-        canonical, resolver, label, _ = resolve_channel(None, f.mode)
-        assert canonical == "raw"
+        # The content type says it is an amplitude (it was shown as "raw"
+        # ADC volts before the content type was read): the card's magnitude,
+        # in volts, the same numbers.
+        canonical, resolver, label, _ = resolve_channel(None, f.mode, f)
+        assert canonical == "magnitude" and label == "|signal| (V)"
         got = resolver(f, f.read_lines(6))
         np.testing.assert_allclose(got, volts, rtol=1e-6)
         assert got[0, 0] == pytest.approx(40_000 / 32_768)  # 1.2207 V, not -0.78 V

@@ -1,7 +1,9 @@
 """Test fixtures: synthetic ``.dat`` files for each mode.
 
-Files are produced via :func:`invisensing.export_dat`, with the flags that make
+Files are produced via :func:`invisensing.export_dat` without a content type
+(content type 0, files written before it existed), with the flags that make
 the correct :class:`invisensing.Mode` be decoded (see ``Mode.from_flags``).
+Files of the data format v1 are in ``test_v1_files.py``.
 """
 from __future__ import annotations
 

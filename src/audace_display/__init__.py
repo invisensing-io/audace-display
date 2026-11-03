@@ -1,7 +1,7 @@
 """audace-display -- visualization of Audace DAS acquisition files.
 
-Reads any format produced by the Filewriter (``.dat`` / ``.hdf5`` / ``.tdms`` /
-``.sgy``) via the :mod:`invisensing` library, and shows:
+Reads any format produced by the Filewriter (``.dat`` / ``.h5`` (``.hdf5``) /
+``.tdms`` / ``.sgy``) via the :mod:`invisensing` library, and shows:
 
 - a **heatmap** (distance x time waterfall) for demodulated files,
 - an **animated oscilloscope** for raw files,
