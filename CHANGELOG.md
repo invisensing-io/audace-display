@@ -15,6 +15,22 @@ Requires `invisensing >= 1.4.0` (publish it to PyPI first).
   band filters, Nyquist, relative time axes, `scope` speed) stays the
   programmed cadence -- the correction moves time labels, not samples. Files
   without a time map show what 0.6.0 showed, plus the last pulse time in `info`.
+- **The content type is the reference.** `info` prints the file's content type
+  (`Content type : hw_phase`; `sw_mozart (Mozart)`), the card on a dual-card run
+  and the HDF5 compression (`ZSTD_LOSSY_1E4` with its grid and error bound). It
+  no longer names a pipeline from the flags (the SCHUBERT flag is deprecated);
+  a legacy capture (content type 0) prints exactly what it printed before.
+- The `magnitude/` child of a split arctan/magnitude recording shows its real
+  values: invisensing 1.4.0 reads a single-column UNSIGNED file as `uint16`
+  (values above 32767 were shown negative).
+- `info` prints absolute times with their UTC offset
+  (`2026-09-23 14:03:12.123456789+02:00`).
+- `inspect --script` probes the plugin's output width on a throwaway instance:
+  the instance that streams sees contiguous, in-order chunks from the start of
+  the window, as the plugin contract promises (it used to see line 0 first).
+- FFT frequency axes are `float64` (they were rounded to `float32`).
+- Python 3.13 and 3.14 in the classifiers and in CI; a CI job runs the Qt
+  (`interactive`) tests offscreen.
 
 ## 0.6.0
 

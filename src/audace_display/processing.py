@@ -116,7 +116,8 @@ def temporal_fft(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Temporal FFT (axis 0 = time) over each column (position).
 
-    Returns ``(freqs_hz, amplitude)`` as a **single-sided amplitude spectrum**
+    Returns ``(freqs_hz, amplitude)`` -- ``float64`` frequencies, a
+    ``float32`` **single-sided amplitude spectrum**
     in the signal's own units: a sinusoid of amplitude ``A`` produces a peak of
     height ``≈ A``. Two calibrations combine:
 
@@ -162,7 +163,10 @@ def temporal_fft(
     if n_rows % 2 == 0:
         onesided[-1] = 1.0
     amp = amp * onesided / (n_rows * cg)
-    return freqs.astype(np.float32), amp.astype(np.float32)
+    # The frequency axis stays float64 (as rfftfreq gives it): a float32
+    # bin spacing is off by ~1e-7 relative, and numpy 1.x and 2.x round
+    # comparisons against it differently (NEP 50).
+    return freqs, amp.astype(np.float32)
 
 
 # --- 1-D signal conditioning -------------------------------------------------

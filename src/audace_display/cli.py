@@ -158,10 +158,15 @@ def _render_heatmap(f, args, transform, base_label: str, is_angular: bool, subti
 
 
 def _format_ns(ns: int) -> str:
-    """``ns`` since the epoch as a local date-time, nanoseconds kept."""
+    """``ns`` since the epoch as a local date-time with its UTC offset,
+    nanoseconds kept: ``2026-09-23 14:03:12.123456789+02:00 (… ns)`` -- the
+    form of the producer's own timestamp string (HDF5 ``timestamp``), so a
+    reader in another time zone knows which instant it is."""
     sec, nsec = divmod(ns, 1_000_000_000)
-    dt = datetime.datetime.fromtimestamp(sec)
-    return f"{dt:%Y-%m-%d %H:%M:%S}.{nsec:09d} ({ns} ns)"
+    dt = datetime.datetime.fromtimestamp(sec, tz=datetime.timezone.utc).astimezone()
+    z = dt.strftime("%z")  # "+0200"
+    offset = f"{z[:3]}:{z[3:5]}" if len(z) >= 5 else z
+    return f"{dt:%Y-%m-%d %H:%M:%S}.{nsec:09d}{offset} ({ns} ns)"
 
 
 def _format_timestamp(f) -> str:
@@ -243,11 +248,51 @@ def _format_trig_frequency(f) -> str:
     return text
 
 
+def _content_type(f) -> tuple[int, str]:
+    """``(content_type, name)`` of ``f``: ``File.content_type_name`` names a
+    value the library does not know by the file's own tag (HDF5 / TDMS)."""
+    header = getattr(f, "header", None)
+    value = getattr(f, "content_type", None)
+    if value is None:
+        value = getattr(header, "content_type", 0) or 0
+    name = getattr(f, "content_type_name", None) or getattr(header, "content_type_name", "")
+    return int(value), str(name)
+
+
+def _format_compression(f) -> Optional[str]:
+    """The HDF5 compression when the file is compressed (invisensing >=
+    1.4.0), with the bound of ``ZSTD_LOSSY_1E4``; ``None`` for an
+    uncompressed file::
+
+        ZSTD_LOSSY_1E4 (phase on a 1.221e-04 rad grid, error <= 6.104e-05 rad)
+    """
+    comp = getattr(f, "compression", None)
+    if comp is None or comp == "NONE":
+        return None
+    step = getattr(f, "quantization_step_rad", None)
+    err = getattr(f, "quantization_max_error_rad", None)
+    detail = []
+    if step is not None:
+        detail.append(f"phase on a {step:.3e} rad grid")
+    if err is not None:
+        detail.append(f"error <= {err:.3e} rad")
+    return comp + (f" ({', '.join(detail)})" if detail else "")
+
+
 def do_info(f, args) -> int:
-    flags = _decode_flags(f.flags)
+    content_type, content_name = _content_type(f)
+    # A file carrying a content type is described by it; a legacy capture
+    # (content_type 0) keeps exactly the output it always had.
+    flags = _decode_flags(f.flags, legacy=content_type == 0)
     d_step = reader.position_step_m(f)
     print(f"File: {f.path}")
     print(f"  Mode           : {f.mode.value}")
+    if content_type != 0:
+        mozart = " (Mozart)" if content_name == "sw_mozart" else ""
+        print(f"  Content type   : {content_name}{mozart}")
+    card = getattr(f, "card", None)
+    if card:
+        print(f"  Card           : {card}")
     print(f"  Timestamp      : {_format_timestamp(f)}")
     if f.num_lines > 1:
         last = reader.absolute_time_ns(f, f.num_lines - 1)
@@ -269,6 +314,9 @@ def do_info(f, args) -> int:
     print(f"  Sample size    : {f.sample_size} B")
     print(f"  Sockets        : {f.header.num_channels}")
     print(f"  Flags          : 0x{f.flags:03X} ({flags})")
+    compression = _format_compression(f)
+    if compression is not None:
+        print(f"  Compression    : {compression}")
 
     canonical = DEFAULT_CHANNEL[f.mode]
     _, resolver, _, _ = resolve_channel(canonical, f.mode)
@@ -285,7 +333,11 @@ def do_info(f, args) -> int:
     return 0
 
 
-def _decode_flags(flags: int) -> str:
+def _decode_flags(flags: int, legacy: bool = True) -> str:
+    """The set flag bits by name. ``legacy`` (a file without a content type):
+    the pipeline name is appended the way it always was; otherwise the
+    content type says what the samples are, and no pipeline is named from
+    the flags (the SCHUBERT flag is deprecated)."""
     from invisensing import (
         FLAG_DEMODULATED, FLAG_FLOAT, FLAG_PHASE,
         FLAG_INTERLEAVED, FLAG_UNSIGNED, FLAG_AC, FLAG_HIZ, FLAG_MOZART,
@@ -299,12 +351,12 @@ def _decode_flags(flags: int) -> str:
         ]
         if flags & bit
     ]
-    # Which demodulation pipeline ran. Appended ONLY when DEMODULATED is set:
-    # Mozart-vs-Schubert is carried by the presence or absence of a single
-    # bit, so on a raw capture "SCHUBERT" would name a pipeline that never
-    # executed. A plain set-dump would never print SCHUBERT at all, which is
-    # why it is spelled out here instead of joining the table above.
-    if flags & FLAG_DEMODULATED:
+    # Legacy files only (content_type 0), unchanged: which demodulation
+    # pipeline ran, appended ONLY when DEMODULATED is set -- Mozart-vs-
+    # Schubert is carried by the presence or absence of a single bit, so on
+    # a raw capture "SCHUBERT" would name a pipeline that never executed. A
+    # file with a content type prints that instead (``Content type`` line).
+    if legacy and flags & FLAG_DEMODULATED:
         bits.append("MOZART" if flags & FLAG_MOZART else "SCHUBERT")
     return " | ".join(bits) if bits else "0"
 
@@ -680,14 +732,21 @@ def _inspect_source(f, args):
     """
     if args.script:
         from .demod import load_demodulator
-        plugin = load_demodulator(args.script, f, getattr(args, "plugin_args", None))
-        probe = np.asarray(plugin.transform(f.read_lines(1)))
+        plugin_args = getattr(args, "plugin_args", None)
+        # The output width is probed on a THROWAWAY instance: the plugin that
+        # streams must see contiguous, in-order chunks from the start of the
+        # window (the contract in demod.py), never a lone line 0 first -- a
+        # stateful filter would carry that line's state into the window.
+        prober = load_demodulator(args.script, f, plugin_args)
+        probe = np.asarray(prober.transform(f.read_lines(1)))
         if probe.ndim != 2:
             raise AudaceDisplayError(
                 f"the demod script must return a 2-D array, got {probe.shape}."
             )
+        del prober
         if hasattr(f, "seek_lines"):
             f.seek_lines(0)
+        plugin = load_demodulator(args.script, f, plugin_args)
         return plugin.transform, plugin.label, f"demod={args.script}", probe.shape[1]
 
     canonical, resolver, label, _ = resolve_channel(args.channel, f.mode)

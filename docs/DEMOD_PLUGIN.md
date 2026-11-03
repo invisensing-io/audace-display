@@ -281,11 +281,17 @@ The user can always override with `--cmap`, `--vmin`, `--vmax`, `--db`.
 |---|---|---|
 | Inter-chunk memory | **No** — resets each chunk | **Yes** — state on `self` |
 | Use for | magnitude, instantaneous phase, per-pulse math | IIR/FIR filters, running statistics, phase unwrapping across pulses |
-| Setup cost | none | `__init__` runs once |
+| Setup cost | none | `__init__` runs once per instance |
 
 If your transform is memoryless, prefer the function — it's simpler. If it has
 any temporal memory, you **must** use the class, or results will be wrong at
 every chunk boundary.
+
+`inspect --script` loads the script **twice**: a throwaway instance processes
+one line to learn the output width, then a fresh instance (the script
+re-imported, module state included) receives the window's chunks — contiguous,
+in order, from the window start. Keep `__init__` and import-time work
+side-effect free (or cheap): they run once per instance.
 
 ---
 

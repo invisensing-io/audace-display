@@ -143,11 +143,12 @@ def test_format_timestamp_i64_ns_is_human_readable():
 
     from audace_display.cli import _format_timestamp
 
-    # Current i64-ns header form. The wall-clock date/hour is timezone-dependent,
-    # but the sub-second fraction and the raw-ns suffix are invariant.
+    # Current i64-ns header form. The wall-clock date/hour and the UTC offset
+    # are timezone-dependent, but the sub-second fraction, the presence of
+    # the offset and the raw-ns suffix are invariant.
     out = _format_timestamp(_FakeFile(1_781_535_974_110_003_203, "1781535974110003203"))
     assert re.fullmatch(
-        r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.110003203 \(1781535974110003203 ns\)",
+        r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.110003203[+-]\d{2}:\d{2} \(1781535974110003203 ns\)",
         out,
     ), out
 

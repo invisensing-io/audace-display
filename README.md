@@ -85,7 +85,8 @@ audace-display scope acq.dat --line 1000 --save frame.png      # 1 frozen line (
 | `--line N`    | Frozen line exported with `--save` (default 0) |
 | `--max-points N` | Max points drawn per line (peak decimation). Default 4000 |
 
-Requires `invisensing >= 1.1.0` (O(1) per-line seek).
+Uses invisensing's O(1) per-line seek (there since invisensing 1.1.0; this
+release requires invisensing >= 1.4.0 anyway).
 
 ## Subcommands
 
@@ -147,8 +148,9 @@ and aggregated on the fly into a `--max-time-bins x --max-space-bins` grid
 | `--max-pulses N`     | Bound the number of pulses read (default: whole file) |
 | `--subsample-time N` | (fft/trace) keep only one pulse out of N |
 
-`.dat` and `.hdf5` stream natively; `.tdms` and `.sgy` also stream with
-`invisensing >= 1.1.0`. `--start-time` seeks directly (O(1) seek) with 1.1.0.
+`.dat` and `.hdf5` stream natively; `.tdms` and `.sgy` stream too, and
+`--start-time` seeks directly (O(1) seek) -- both from invisensing 1.1.0, below
+the required invisensing >= 1.4.0.
 
 ## Actual trigger frequency
 
@@ -190,7 +192,23 @@ axis. `info` says how the times were stamped:
 ```
 
 Every rate stays the programmed cadence (`line_rate_hz`): the correction moves
-time labels, never the `fs` of a spectrum or a filter.
+time labels, never the `fs` of a spectrum or a filter. Absolute times are local
+date-times with their UTC offset (`2026-09-23 14:03:12.123456789+02:00`), the
+form of the producer's own timestamp string.
+
+### What the file is (0.7.0)
+
+A file carrying a content type (every recent capture) is described by it:
+`info` prints `Content type : hw_phase` (`sw_mozart (Mozart)` for the GPU Mozart
+phase), the acquisition card on a dual-card run (`Card : pcie7818`), and the
+HDF5 compression when there is one (`ZSTD`, or `ZSTD_LOSSY_1E4` with its grid and
+error bound). The pipeline is never named from the flags any more (the SCHUBERT
+flag is deprecated). A legacy capture (content type 0) prints exactly what it
+always did, `MOZART` / `SCHUBERT` included.
+
+The `magnitude/` child of a split arctan/magnitude recording (`hw_amplitude`,
+`UNSIGNED`) is read as `uint16` by invisensing 1.4.0, so its values above 32767
+show as they are (40000 -> 1.22 V at a 1 V range), not negative.
 
 ## Frequency-band heatmaps
 
