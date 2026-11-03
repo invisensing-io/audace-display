@@ -3,8 +3,8 @@
 Visualization of **Audace DAS** acquisition files -- simple, fast, safe.
 
 `audace-display` reads any format produced by the Filewriter
-(`.dat`, `.hdf5`, `.tdms`, `.sgy`) via the [`invisensing`](https://pypi.org/project/invisensing/)
-library, automatically detects the file mode, and shows:
+(`.dat`, `.h5` / `.hdf5`, `.tdms`, `.sgy`) via the [`invisensing`](https://pypi.org/project/invisensing/)
+library, automatically detects what the file holds (its content type), and shows:
 
 - a **heatmap** (distance x time waterfall) for **demodulated** files,
 - an **animated oscilloscope** (lines replayed in real time, looping) for **raw**
@@ -121,15 +121,26 @@ audace-display inspect arctan_mag.dat  --script plugins/dui_rust.py --index 120
 
 ## Channels per mode
 
+The mode comes from the file's content type (from its flags on a file written
+before the content type existed).
+
 | File mode          | Valid channels                                      | Default     |
 |--------------------|-----------------------------------------------------|-------------|
 | `raw`              | `raw`                                               | `raw`       |
+| `phase`            | `phase`                                             | `phase`     |
+| `amplitude`        | `magnitude`                                         | `magnitude` |
+| `arctan`           | `arctan`                                            | `arctan`    |
+| `i` / `q`          | `i` / `q`                                           | `i` / `q`   |
+| `custom`           | `samples` (a script's output, as stored)            | `samples`   |
+| `variance`, `log_variance` | `variance`, `log_variance`                  | the file's  |
 | `iq`               | `i`, `q`, `magnitude` (\|IQ\|), `phase_wrapped`     | `magnitude` |
 | `arctan_magnitude` | `arctan`, `magnitude` (sqrt(I^2+Q^2))               | `magnitude` |
-| `phase`            | `phase`                                             | `phase`     |
+| `phase_amplitude`  | `phase`, `magnitude`                                | `phase`     |
 
-Common aliases: `mag`/`amp` -> `magnitude`, `atan` -> `arctan`, `angle` ->
-`phase_wrapped`. **No demodulation** is applied: channels are read as the
+The last three are files of pairs written before the Audace data format v1;
+since then each member is its own file. Common aliases: `mag`/`amp` ->
+`magnitude`, `atan` -> `arctan`, `angle` -> `phase_wrapped`, `var` ->
+`variance`. **No demodulation** is applied: channels are read as the
 Filewriter wrote them.
 
 ## Large files (200 MB - 10 GB)
@@ -144,19 +155,19 @@ and aggregated on the fly into a `--max-time-bins x --max-space-bins` grid
 | `--max-time-bins N`  | Temporal (Y) resolution of the waterfall. Default 2000 |
 | `--max-space-bins N` | Spatial (X) resolution of the waterfall. Default 2000 |
 | `--reduce {mean,rms,std,variance,peak}` | Temporal aggregation statistic. Default `mean` |
-| `--variance {linear,log}` | Color each time bin by its temporal **variance** (`log` = log10). Overrides `--reduce`/`--db`. Off by default |
+| `--variance {linear,log}` | Color each time bin by its temporal **variance** (`log` = log10, floored 120 dB below the maximum -- a display scale, not the console's `log10(1 + variance)` of the archive exports, content type 28). Overrides `--reduce`/`--db`. Off by default |
 | `--max-pulses N`     | Bound the number of pulses read (default: whole file) |
 | `--subsample-time N` | (fft/trace) keep only one pulse out of N |
 
-`.dat` and `.hdf5` stream natively; `.tdms` and `.sgy` stream too, and
+`.dat` and `.h5` / `.hdf5` stream natively; `.tdms` and `.sgy` stream too, and
 `--start-time` seeks directly (O(1) seek) -- both from invisensing 1.1.0, below
 the required invisensing >= 1.4.0.
 
 ## Actual trigger frequency
 
 A card fires on an **integer divider of its clock**, so a requested trigger
-frequency that does not divide the clock is not met exactly: on a PCIe7821
-(250 MHz clock), 75,000 Hz requested gives 250 MHz / 3,333 = 75,007.5008 Hz
+frequency that does not divide the clock is not met exactly: on a 250 MHz
+clock, 75,000 Hz requested gives 250 MHz / 3,333 = 75,007.5008 Hz
 (+100 ppm, i.e. 0.36 s per hour). Recent HDF5 files carry the actual value
 (`trig_frequency_real_hz`, `trig_clock_hz`, `trig_period_ticks`), exposed by
 `invisensing >= 1.3.0` as `File.trig_frequency_real_hz`.
@@ -198,17 +209,38 @@ form of the producer's own timestamp string.
 
 ### What the file is (0.7.0)
 
-A file carrying a content type (every recent capture) is described by it:
-`info` prints `Content type : hw_phase` (`sw_mozart (Mozart)` for the GPU Mozart
-phase), the acquisition card on a dual-card run (`Card : pcie7818`), and the
-HDF5 compression when there is one (`ZSTD`, or `ZSTD_LOSSY_1E4` with its grid and
-error bound). The pipeline is never named from the flags any more (the SCHUBERT
-flag is deprecated). A legacy capture (content type 0) prints exactly what it
-always did, `MOZART` / `SCHUBERT` included.
+A file carrying a content type (every recent capture) is described by it, and
+what it holds -- the mode, the default channel, the default view -- comes from
+it (invisensing 1.4.0, Audace data format v1). Since data format v1 a recording
+holds one quantity per file: an interleaved product is written as two files,
+same name, sibling directories (`phase/` + `amplitude/`, `arctan/` +
+`magnitude/`, `i_component/` + `q_component/`). Each opens on its own:
 
-The `magnitude/` child of a split arctan/magnitude recording (`hw_amplitude`,
-`UNSIGNED`) is read as `uint16` by invisensing 1.4.0, so its values above 32767
-show as they are (40000 -> 1.22 V at a 1 V range), not negative.
+| Mode | Default channel | Default view |
+|---|---|---|
+| `raw` | `raw` (V) | oscilloscope |
+| `phase` | `phase` (rad) | heatmap |
+| `amplitude` | `magnitude` (V for the card's magnitude; a software front end's amplitude as stored) | heatmap |
+| `arctan` | `arctan` (rad) | heatmap |
+| `i` / `q` | `i` / `q` (V) | heatmap |
+| `custom` | `samples` (a script's output, as stored) | heatmap |
+| `variance` / `log_variance` | `variance` / `log_variance` (archive exports) | heatmap |
+
+`info` prints the content type (`Content type : dui_coherent_phase`,
+`sw_mozart (Mozart)` for the Mozart phase) and its quantity and unit, the data
+format version, the code of the card that recorded the file (`Card : p21` --
+`p18`, `p21`, `s125` or `s500`, on every v1 file; an older file carries none,
+or the tag of a two-card run, read as its code), the other half of a split
+pair, the duration the writer recorded, the line period, the column a variance
+export was computed from, and the HDF5 compression when there is one (`ZSTD`,
+or `ZSTD_LOSSY_1E4` with its grid and error bound). The pipeline is never named
+from the flags any more (the SCHUBERT flag is deprecated). A legacy capture
+(content type 0) prints exactly what it always did, `MOZART` / `SCHUBERT`
+included.
+
+The `magnitude/` child of a split arctan/magnitude recording (`hw_amplitude`)
+is read as `uint16`, so its values above 32767 show as they are (40000 -> 1.22 V
+at a 1 V range), not negative.
 
 ## Frequency-band heatmaps
 

@@ -183,14 +183,18 @@ flags your kwargs don't expose:
 | `sample_size`         | Bytes per sample (2 = int16, 4 = int32/float32) |
 | `range_v`             | ADC full-scale range in volts (for code→volt scaling) |
 | `flags`               | Raw header flags bitfield (interleaved / float / phase / …) |
-| `mode`                | File mode string (`"raw"`, `"iq"`, `"arctan_magnitude"`, `"phase"`) |
+| `mode`                | File mode string (`"raw"`, `"phase"`, `"amplitude"`, `"arctan"`, `"i"`, `"q"`, `"iq"`, `"arctan_magnitude"`, `"phase_amplitude"`…, `invisensing.Mode`) |
 | `timestamp`           | Acquisition start timestamp |
 | `num_lines`           | Total pulses in the file |
+| `content_type`, `content_type_name` | What the samples are (`19`, `"dui_coherent_phase"`; `0`, `"undefined"` on a file written before the content type existed) — since 0.7.0 |
+| `dtype`               | numpy dtype of `chunk` (from the content type on a v1 file, which carries no FLOAT flag) — since 0.7.0 |
+| `card`                | Code of the card that recorded the file (`"p18"`, `"p21"`, `"s125"`, `"s500"`) or `None` — since 0.7.0 |
+| `spatial_step_m`, `temporal_step_s` | Metres between positions, seconds between lines (`None` when unknown) — since 0.7.0 |
 
 ### Requested vs actual trigger frequency
 
 A card fires on an **integer divider of its clock**. A requested frequency that
-does not divide the clock is not met exactly: on a PCIe7821 (250 MHz clock),
+does not divide the clock is not met exactly: on a 250 MHz clock,
 75,000 Hz requested gives 250 MHz / 3,333 = **75,007.5008 Hz** (+100 ppm).
 Recent HDF5 files carry the actual value, read by `invisensing >= 1.3.0`.
 

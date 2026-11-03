@@ -15,14 +15,37 @@ Requires `invisensing >= 1.4.0` (publish it to PyPI first).
   band filters, Nyquist, relative time axes, `scope` speed) stays the
   programmed cadence -- the correction moves time labels, not samples. Files
   without a time map show what 0.6.0 showed, plus the last pulse time in `info`.
-- **The content type is the reference.** `info` prints the file's content type
-  (`Content type : hw_phase`; `sw_mozart (Mozart)`), the card on a dual-card run
-  and the HDF5 compression (`ZSTD_LOSSY_1E4` with its grid and error bound). It
-  no longer names a pipeline from the flags (the SCHUBERT flag is deprecated);
-  a legacy capture (content type 0) prints exactly what it printed before.
+- **The content type is the reference** (Audace data format v1). What a file
+  holds -- its mode, default channel and default view -- comes from its content
+  type, which a v1 file needs since it writes no FLOAT / UNSIGNED / INTERLEAVED
+  flag. A recording now holds one quantity per file (`phase/` + `amplitude/`,
+  `arctan/` + `magnitude/`, `i_component/` + `q_component/`), and each opens on
+  its own: phase -> `phase`, amplitude -> `magnitude` (the card's in volts, a
+  software front end's as stored), arctan -> `arctan` (rad), I / Q -> `i` / `q`
+  (V), a script's output -> `samples`, all as heatmaps; raw stays the
+  oscilloscope. The paired files written before (IQ, arctan/magnitude,
+  phase/amplitude) read as before. The `amplitude/` and `magnitude/` files used
+  to be classified raw (shown as ADC volts, opened in the oscilloscope).
+- `info` prints the file's content type (`Content type : dui_coherent_phase`;
+  `sw_mozart (Mozart)`), its quantity and unit, the data format version, the
+  code of the card that recorded it (`Card : p21` -- `p18`, `p21`, `s125`,
+  `s500`), the other half of a split pair, the duration the writer recorded,
+  the line period, and the HDF5 compression (`ZSTD_LOSSY_1E4` with its grid
+  and error bound). It no longer names a pipeline from the flags (the SCHUBERT
+  flag is deprecated); a legacy capture (content type 0) prints exactly what it
+  printed before.
+- Console archive exports (zone variances, `viz_variance` and its Log scale
+  `viz_logvar`): channels `variance` and `log_variance`, and `info` names the
+  column the variance was computed from. `--variance log` stays a display
+  scale (log10 floored below the maximum), not the console's
+  `log10(1 + variance)`.
+- `.h5` (the HDF5 name of data format v1) and `.hdf5` are both read.
+- Demod plugin contract: new `meta` keys `content_type`, `content_type_name`,
+  `dtype`, `card`, `spatial_step_m`, `temporal_step_s`. Existing plugins work
+  unchanged.
 - The `magnitude/` child of a split arctan/magnitude recording shows its real
-  values: invisensing 1.4.0 reads a single-column UNSIGNED file as `uint16`
-  (values above 32767 were shown negative).
+  values: invisensing 1.4.0 reads it as `uint16` (values above 32767 were shown
+  negative).
 - `info` prints absolute times with their UTC offset
   (`2026-09-23 14:03:12.123456789+02:00`).
 - `inspect --script` probes the plugin's output width on a throwaway instance:
@@ -37,8 +60,8 @@ Requires `invisensing >= 1.4.0` (publish it to PyPI first).
 Requires `invisensing >= 1.3.0` (publish it to PyPI first).
 
 - **Actual trigger frequency.** A card fires on an integer divider of its clock,
-  so a requested frequency that does not divide it is not met exactly (PCIe7821:
-  75,000 Hz requested -> 75,007.5008 Hz). Every line <-> time conversion now
+  so a requested frequency that does not divide it is not met exactly (on a
+  250 MHz clock: 75,000 Hz requested -> 75,007.5008 Hz). Every line <-> time conversion now
   uses the actual pulse rate (`File.trig_frequency_real_hz`, new
   `audace_display.line_rate_hz`): time axes, `--start-time` / `--duration`,
   `fs` of `fft` / `inspect` / `bandheatmaps`, Nyquist, `scope` playback speed and
