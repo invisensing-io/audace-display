@@ -1,15 +1,32 @@
 name: Publish to PyPI
 
-# Publishes to PyPI when a GitHub Release is published, or on manual dispatch.
-# Authentication uses PyPI Trusted Publishing (OIDC) -- no API token is stored.
-# Configure the trusted publisher once on PyPI (see README / repo docs):
-#   project: audace-display, owner: invisensing-io, repo: audace-display,
-#   workflow: publish.yml, environment: pypi
+# Publishes to PyPI when a tag `v*` is pushed, the same flow as python-lib:
+#
+#   git tag -a v0.7.0 -F notes.txt      # annotated: its message is the release text
+#   git push origin main v0.7.0
+#
+# 1. build: test against invisensing from PyPI, check that the tag matches the
+#    package version, build the sdist + wheel, twine check.
+# 2. publish: upload to PyPI with Trusted Publishing (OIDC, no token stored).
+#    The trusted publisher configured on PyPI is unchanged by this trigger:
+#      project: audace-display, owner: invisensing-io, repo: audace-display,
+#      workflow: publish.yml, environment: pypi
+# 3. github-release: create the GitHub Release; its text is the annotated
+#    tag's message, its assets the sdist + wheel.
+#
+# workflow_dispatch (Actions tab) runs the build and tests only: nothing is
+# published.
 
 on:
-  release:
-    types: [published]
-  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch: {}
+
+# One release pipeline per tag at a time.
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -35,6 +52,16 @@ jobs:
           pip install -e .[test]
           pytest -q
 
+      - name: The tag matches the package version
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PACKAGE_VERSION=$(python -c "import audace_display; print(audace_display.__version__)")
+          if [ "$TAG_VERSION" != "$PACKAGE_VERSION" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match the package version $PACKAGE_VERSION"
+            exit 1
+          fi
+
       - name: Build sdist + wheel
         run: |
           python -m pip install build twine
@@ -51,6 +78,7 @@ jobs:
     name: Publish to PyPI (trusted publishing)
     needs: build
     runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     environment:
       name: pypi
       url: https://pypi.org/p/audace-display
@@ -65,3 +93,40 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    name: Create the GitHub Release
+    needs: publish
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write   # required to create a Release
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      # actions/checkout replaces the pushed tag by a lightweight tag on its
+      # commit, so `%(contents)` would give the commit message. Fetch the tag
+      # object again so its own message is read.
+      - name: Fetch the annotated tag
+        run: git fetch --force origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+
+      - name: Download dist artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+
+      - name: Create the GitHub Release with the tag's message
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if [ "$(git cat-file -t "$TAG")" = "tag" ]; then
+            git tag -l --format='%(contents)' "$TAG" > release-notes.md
+            gh release create "$TAG" --title "$TAG" --notes-file release-notes.md dist/*
+          else
+            echo "::warning::$TAG is a lightweight tag: release notes generated from the commits"
+            gh release create "$TAG" --title "$TAG" --generate-notes dist/*
+          fi
