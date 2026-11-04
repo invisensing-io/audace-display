@@ -4,6 +4,14 @@
 
 Requires `invisensing >= 1.4.0` (publish it to PyPI first).
 
+- **Distances are 3.3 % shorter on every file without a spatial step**
+  (every file written before data format v1). invisensing 1.4.0 measures
+  the fibre with the acquisition's 2·10⁸ m/s instead of 206 856 796 m/s
+  (`File.distance` × 0.96685), so `info`'s fibre length and spatial step,
+  the distance axes of every view and the columns `--start-distance` /
+  `--end-distance` select follow: 487 positions at 100 MS/s span 487.0 m
+  instead of 503.7 m. A file of data format v1 carries its own spatial step,
+  already on 2·10⁸ m/s.
 - **Corrected absolute times.** The Audace acquisition corrects the drift of
   the card's oscillator and the shots it lost (the card's *time map*); the
   recorder writes each HDF5 file's time axis into its attributes and
@@ -32,8 +40,13 @@ Requires `invisensing >= 1.4.0` (publish it to PyPI first).
   `s500`), the other half of a split pair, the duration the writer recorded,
   the line period, and the HDF5 compression (`ZSTD_LOSSY_1E4` with its grid
   and error bound). It no longer names a pipeline from the flags (the SCHUBERT
-  flag is deprecated); a legacy capture (content type 0) prints exactly what it
-  printed before.
+  flag is deprecated). A legacy capture (content type 0) prints no content type
+  line and keeps its flag description and pipeline name; the rest of its
+  output changes as described here: fibre length and spatial step 3.3 %
+  shorter, the last pulse time and, on a file with a binary time anchor, times
+  with their UTC offset, the card code when its header carries a card tag
+  written before v1, and the statistics of a single column flagged UNSIGNED
+  computed on unsigned values.
 - Console archive exports (zone variances, `viz_variance` and its Log scale
   `viz_logvar`): channels `variance` and `log_variance`, and `info` names the
   column the variance was computed from. `--variance log` stays a display

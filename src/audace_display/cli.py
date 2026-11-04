@@ -292,7 +292,8 @@ def _format_quantity(f) -> Optional[str]:
 def do_info(f, args) -> int:
     content_type, content_name = _content_type(f)
     # A file carrying a content type is described by it; a legacy capture
-    # (content_type 0) keeps exactly the output it always had.
+    # (content_type 0) keeps the flag description and the pipeline name it
+    # always had.
     flags = _decode_flags(f.flags, legacy=content_type == 0)
     d_step = reader.position_step_m(f)
     format_version = getattr(f, "format_version", 0) or 0
