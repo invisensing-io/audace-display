@@ -39,7 +39,7 @@ from .reader import (
 )
 from .demod import load_demodulator, DemodPlugin
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 
 __all__ = [
     "AudaceDisplayError",

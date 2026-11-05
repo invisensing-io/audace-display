@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.8.0
+
+Requires `invisensing >= 1.5.0` (publish it to PyPI first).
+
+- **The software arctan's recordings open as what they are** (Audace data
+  format v1, content-type registry revision 4, read by invisensing 1.5.0).
+  The Audace demodulation can now compute the arctan and magnitude in
+  software, from the card's raw samples, for every method that used to read
+  the card's: AMPLITUDE_ARCTAN, DUI_ARCTAN, DUI_STATEFUL_ARCTAN, besides
+  PHASE_SAC. Their files open on their own view, with their unit:
+  - 29 `dui_arctan_phase` and 30 `dui_stateful_arctan_phase`: phase, in
+    radians (under 0.7.0 / invisensing 1.4.0 they were unknown values read
+    from their flags, with a warning);
+  - 11 `sw_amplitude_sac`, the software front end's magnitude, now also a
+    recording of its own (the AMPLITUDE_ARCTAN output): amplitude, in
+    front-end counts — not the card's magnitude, so not convertible to volts;
+  - a DUI_ARCTAN / DUI_STATEFUL_ARCTAN recording that keeps the amplitude is
+    two files, `phase/` (29 or 30) and `amplitude/` (11), as for the other
+    methods.
+- No change to the views themselves: every description comes from
+  invisensing, so this release only raises the requirement.
+
 ## 0.7.0
 
 Requires `invisensing >= 1.4.0` (publish it to PyPI first).

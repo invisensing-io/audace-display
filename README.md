@@ -22,8 +22,8 @@ pip install audace-display              # matplotlib (static + interactive + PNG
 pip install audace-display[interactive] # + pyqtgraph backend (fast interactive)
 ```
 
-Dependencies: `numpy`, `matplotlib`, `invisensing` >= 1.4.0 (corrected line
-times; actual trigger frequency since 1.3.0; O(1) seek and TDMS/SEG-Y streaming
+Dependencies: `numpy`, `matplotlib`, `invisensing` >= 1.5.0 (content-type
+registry revision 4 since 1.5.0; corrected line times since 1.4.0; actual trigger frequency since 1.3.0; O(1) seek and TDMS/SEG-Y streaming
 since 1.1.0). Optional
 `interactive` extra: `pyqtgraph` + `PyQt5`.
 
@@ -86,7 +86,7 @@ audace-display scope acq.dat --line 1000 --save frame.png      # 1 frozen line (
 | `--max-points N` | Max points drawn per line (peak decimation). Default 4000 |
 
 Uses invisensing's O(1) per-line seek (there since invisensing 1.1.0; this
-release requires invisensing >= 1.4.0 anyway).
+release requires invisensing >= 1.5.0 anyway).
 
 ## Subcommands
 
@@ -161,7 +161,7 @@ and aggregated on the fly into a `--max-time-bins x --max-space-bins` grid
 
 `.dat` and `.h5` / `.hdf5` stream natively; `.tdms` and `.sgy` stream too, and
 `--start-time` seeks directly (O(1) seek) -- both from invisensing 1.1.0, below
-the required invisensing >= 1.4.0.
+the required invisensing >= 1.5.0.
 
 ## Actual trigger frequency
 
