@@ -5,6 +5,7 @@ Reads any format produced by the Filewriter (``.dat`` / ``.h5`` (``.hdf5``) /
 
 - a **heatmap** (distance x time waterfall) for demodulated files,
 - an **animated oscilloscope** for raw files,
+- a phase as strain, in nm/m, with ``--nanostrain`` (invisensing >= 1.6.0),
 
 with automatic mode detection. *Streaming* decimation to handle multi-GB files
 in bounded RAM.
@@ -39,7 +40,7 @@ from .reader import (
 )
 from .demod import load_demodulator, DemodPlugin
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 
 __all__ = [
     "AudaceDisplayError",

@@ -10,7 +10,9 @@ library, automatically detects what the file holds (its content type), and shows
 - an **animated oscilloscope** (lines replayed in real time, looping) for **raw**
   files,
 - **per-frequency-band heatmaps** (`bandheatmaps`) and a temporal **variance /
-  log-variance** color mode (`--variance`).
+  log-variance** color mode (`--variance`),
+- a phase as **strain, in nm/m** (`--nanostrain`), when the file records its
+  gauge length.
 
 Reading is **streamed and decimated**: a multi-GB file is reduced to screen
 resolution without ever being fully loaded into memory.
@@ -22,9 +24,10 @@ pip install audace-display              # matplotlib (static + interactive + PNG
 pip install audace-display[interactive] # + pyqtgraph backend (fast interactive)
 ```
 
-Dependencies: `numpy`, `matplotlib`, `invisensing` >= 1.5.0 (content-type
-registry revision 4 since 1.5.0; corrected line times since 1.4.0; actual trigger frequency since 1.3.0; O(1) seek and TDMS/SEG-Y streaming
-since 1.1.0). Optional
+Dependencies: `numpy`, `matplotlib`, `invisensing` >= 1.6.0 (gauge length and
+phase as strain since 1.6.0; content-type registry revision 4 since 1.5.0;
+corrected line times since 1.4.0; actual trigger frequency since 1.3.0; O(1)
+seek and TDMS/SEG-Y streaming since 1.1.0). Optional
 `interactive` extra: `pyqtgraph` + `PyQt5`.
 
 ## Quick start
@@ -161,7 +164,7 @@ and aggregated on the fly into a `--max-time-bins x --max-space-bins` grid
 
 `.dat` and `.h5` / `.hdf5` stream natively; `.tdms` and `.sgy` stream too, and
 `--start-time` seeks directly (O(1) seek) -- both from invisensing 1.1.0, below
-the required invisensing >= 1.5.0.
+the required invisensing >= 1.6.0.
 
 ## Actual trigger frequency
 
@@ -241,6 +244,44 @@ included.
 The `magnitude/` child of a split arctan/magnitude recording (`hw_amplitude`)
 is read as `uint16`, so its values above 32767 show as they are (40000 -> 1.22 V
 at a 1 V range), not negative.
+
+## Phase as strain, in nm/m (0.9.0)
+
+`--nanostrain` shows a phase as **strain, in nm/m**, in every view (auto,
+`info`, `heatmap`, `bandheatmaps`, `fft`, `trace`, `scope`, `inspect`; not
+`demod`, whose input is raw). The file is opened with invisensing's
+`phase_unit="nanostrain"` (invisensing >= 1.6.0), which converts the phase
+while it is read:
+
+```text
+strain [nm/m] = phase [rad] / gauge_length_m [m] x NANOSTRAIN_PER_RAD_METRE
+```
+
+```bash
+audace-display phase.h5 --nanostrain                        # heatmap, nm/m
+audace-display heatmap phase.h5 --nanostrain --variance log # log10 Var[strain] (nm/m)^2
+audace-display scope phase.h5 --nanostrain --line 100 --save line.png
+audace-display info phase.h5 --nanostrain
+```
+
+- `NANOSTRAIN_PER_RAD_METRE` is invisensing's constant (115 nm/m per rad/m)
+  and is **provisional**: its final value is fixed in invisensing before the
+  release that publishes the option.
+- The gauge length is the one the file records (`info` prints it: `Gauge
+  length : 9.6 m`), the gauge the producer applied, recorded on a phase
+  since 2026-11.
+- Labels: `strain (nm/m)` (colorbar, y axis), `Var[strain] (nm/m)^2` and
+  `log10 Var[strain] (nm/m)^2` with `--variance`, `RMS[strain] (nm/m)` for a
+  band, `strain (dB, ref=... nm/m)` with `--db`, `Amplitude (nm/m)` for a
+  spectrum. Strain is not an angle: the colormap and the color limits are
+  those of any other quantity (`viridis`, 1/99 percentiles).
+- On a file of phase/amplitude pairs only the phase is converted; the
+  `magnitude` channel is unchanged.
+- **Refused** (the command exits with `ERROR: ...`, code 1, no traceback):
+  a file that holds no phase (raw, I/Q, arctan, amplitude, variances), and a
+  phase that does not record its gauge length (recorded before 2026-11, a
+  MOZART / MOZART_PLUS phase, a file without a content type). No gauge
+  length is ever assumed.
 
 ## Frequency-band heatmaps
 
@@ -370,8 +411,9 @@ with File("acquisition.dat") as f:
 
 - **Interactive display** by default; `--save out.png` for headless mode (the
   `Agg` backend is chosen automatically when there is no display).
-- **Auto colormap**: `viridis` (sequential) for magnitude/raw, `RdBu_r`
-  (diverging, centered on 0) for phase/arctan. Override with `--cmap`.
+- **Auto colormap**: `viridis` (sequential) for magnitude/raw and for a phase
+  shown as strain (`--nanostrain`), `RdBu_r` (diverging, centered on 0) for
+  phase/arctan. Override with `--cmap`.
 - **Auto-scaling**: 1/99 percentiles in linear, `median - 30 dB -> max` in dB,
   centered on 0 for angular channels. Override with `--vmin`/`--vmax`.
 

@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.9.0
+
+Requires `invisensing >= 1.6.0` (publish it to PyPI first).
+
+- **`--nanostrain`: a phase shown as strain, in nm/m.** On every view but
+  `demod` (auto, `info`, `heatmap`, `bandheatmaps`, `fft`, `trace`, `scope`,
+  `inspect`), the file is opened with invisensing's
+  `phase_unit="nanostrain"`: `phase / gauge_length_m x
+  NANOSTRAIN_PER_RAD_METRE`, with the gauge length the file records
+  (Audace-Lib, since 2026-11) and invisensing's constant (115 nm/m per
+  rad/m, provisional: fixed in invisensing before the release that
+  publishes the option). The labels read `strain (nm/m)`, `Var[strain]
+  (nm/m)^2` / `log10 Var[strain] (nm/m)^2` with `--variance`,
+  `RMS[strain] (nm/m)` per band, `strain (dB, ref=... nm/m)` with `--db`,
+  `Amplitude (nm/m)` for a spectrum, in matplotlib and in the pyqtgraph
+  view alike. Strain is not an angle: `viridis` and the 1/99 percentiles,
+  not the angular scale.
+- **Refused** with an `ERROR:` line and exit code 1, no traceback: a file
+  that holds no phase, and a phase that does not record its gauge length.
+- `info` prints the gauge length of a phase that records one (`Gauge length :
+  9.6 m`), and with `--nanostrain` the factor applied and the compression
+  bounds in nm/m beside the radians.
+- A variance label squares a compound unit whole (`(nm/m)^2`); a simple one
+  is unchanged (`rad^2`).
+
 ## 0.8.0
 
 Requires `invisensing >= 1.5.0` (publish it to PyPI first).
