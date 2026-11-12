@@ -18,12 +18,18 @@ from invisensing import File, Mode
 
 from . import decimate, processing, reader
 from ._errors import AudaceDisplayError
-from .channels import DEFAULT_CHANNEL, resolve_channel
+from .channels import DEFAULT_CHANNEL, STRAIN_UNIT, reads_strain, resolve_channel
 
 try:
     from . import __version__
 except Exception:  # pragma: no cover - version is informational only
     __version__ = "0"
+
+try:
+    # nm/m per rad/m: invisensing's constant (provisional), never copied here.
+    from invisensing import NANOSTRAIN_PER_RAD_METRE as _K_NANOSTRAIN
+except ImportError:  # invisensing < 1.6.0: --nanostrain then says what to install
+    _K_NANOSTRAIN = None
 
 # FFT memory budget (float32 cells) before spatial subsampling.
 _FFT_MAX_CELLS = 256 * 1024 * 1024 // 4
@@ -79,9 +85,15 @@ def _split_label(base_label: str) -> tuple[str, str]:
 
 
 def _variance_label(base_label: str, variance: str) -> str:
-    """Colorbar label for a variance / log-variance field (units squared)."""
+    """Colorbar label for a variance / log-variance field (units squared):
+    ``rad^2``, and a compound unit squared whole, ``(nm/m)^2``."""
     head, unit = _split_label(base_label)
-    sq = f" ({unit}^2)" if unit else ""
+    if not unit:
+        sq = ""
+    elif "/" in unit:
+        sq = f" ({unit})^2"
+    else:
+        sq = f" ({unit}^2)"
     prefix = "log10 Var" if variance == "log" else "Var"
     return f"{prefix}[{head}]{sq}"
 
@@ -271,11 +283,17 @@ def _format_compression(f) -> Optional[str]:
         return None
     step = getattr(f, "quantization_step_rad", None)
     err = getattr(f, "quantization_max_error_rad", None)
+    # Read as strain: the same bounds in nm/m beside the radians.
+    factor = getattr(f, "nanostrain_per_rad", None) if reads_strain(f) else None
+
+    def strain(v: float) -> str:
+        return f" = {v * factor:.3e} {STRAIN_UNIT}" if factor else ""
+
     detail = []
     if step is not None:
-        detail.append(f"phase on a {step:.3e} rad grid")
+        detail.append(f"phase on a {step:.3e} rad grid{strain(step)}")
     if err is not None:
-        detail.append(f"error <= {err:.3e} rad")
+        detail.append(f"error <= {err:.3e} rad{strain(err)}")
     return comp + (f" ({', '.join(detail)})" if detail else "")
 
 
@@ -318,6 +336,14 @@ def do_info(f, args) -> int:
     sibling = getattr(f, "sibling_path", None)
     if sibling is not None:
         print(f"  Other half     : {sibling}")
+    gauge = getattr(f, "gauge_length_m", None)
+    if gauge is not None:
+        print(f"  Gauge length   : {gauge:g} m")
+    if reads_strain(f):
+        print(
+            f"  Strain         : {STRAIN_UNIT} = rad x {f.nanostrain_per_rad:.6g} "
+            f"(= {_K_NANOSTRAIN:g} / {gauge:g} m; the constant is provisional)"
+        )
     print(f"  Timestamp      : {_format_timestamp(f)}")
     if f.num_lines > 1:
         last = reader.absolute_time_ns(f, f.num_lines - 1)
@@ -349,14 +375,15 @@ def do_info(f, args) -> int:
         print(f"  Compression    : {compression}")
 
     canonical = DEFAULT_CHANNEL[f.mode]
-    _, resolver, _, _ = resolve_channel(canonical, f.mode, f)
+    _, resolver, label, _ = resolve_channel(canonical, f.mode, f)
     n_stat = min(1000, f.num_lines)
     if n_stat > 0:
         buf = f.read_lines(n_stat)
         data = resolver(f, buf)
         mi, p1, p50, p99, ma = np.percentile(data, [0, 1, 50, 99, 100]).tolist()
+        shown = f" -- {label}" if reads_strain(f) and canonical == "phase" else ""
         print(
-            f"\n  Stats for channel '{canonical}' over {n_stat:,} pulses:"
+            f"\n  Stats for channel '{canonical}'{shown} over {n_stat:,} pulses:"
             f"\n    min={mi:+.4g}  p1={p1:+.4g}  p50={p50:+.4g}  p99={p99:+.4g}  max={ma:+.4g}"
             f"\n    mean={data.mean():+.4g}  std={data.std():.4g}"
         )
@@ -761,6 +788,12 @@ def _inspect_source(f, args):
     transform output, which may differ from ``f.positions_per_line``.
     """
     if args.script:
+        if reads_strain(f):
+            raise AudaceDisplayError(
+                "--nanostrain shows a built-in phase channel as strain; a --script "
+                "plugin reads the file's own samples and labels its own output. "
+                "Drop one of the two."
+            )
         from .demod import load_demodulator
         plugin_args = getattr(args, "plugin_args", None)
         # The output width is probed on a THROWAWAY instance: the plugin that
@@ -858,8 +891,46 @@ def do_auto(f, args) -> int:
 # --- File-opening wrappers ---------------------------------------------------
 
 
+def _check_nanostrain(f) -> None:
+    """Refuse ``--nanostrain`` on a file that cannot be read as strain, in
+    the CLI's words: a file that holds no phase, a phase that does not record
+    its gauge length (no gauge length is ever assumed)."""
+    if not hasattr(f, "gauge_length_m"):
+        raise AudaceDisplayError(
+            "--nanostrain needs invisensing >= 1.6.0 (pip install -U invisensing)."
+        )
+    content_type, name = _content_type(f)
+    if f.mode not in (Mode.PHASE, Mode.PHASE_AMPLITUDE):
+        raise AudaceDisplayError(
+            f"--nanostrain shows a phase as strain ({STRAIN_UNIT}), and {f.path.name} "
+            f"holds '{name}' (content type {content_type}, mode {f.mode.value}), "
+            "not a phase. Drop --nanostrain."
+        )
+    if f.gauge_length_m is None:
+        raise AudaceDisplayError(
+            f"--nanostrain needs the gauge length the phase was measured over, and "
+            f"{f.path.name} ('{name}', content type {content_type}) does not record "
+            "its gauge length (a recording made before 2026-11, a MOZART or "
+            "MOZART_PLUS phase, or a file converted without it). No gauge length is "
+            "assumed: drop --nanostrain to show the phase in radians."
+        )
+
+
+def _open(args) -> File:
+    """The file of ``args``: read as strain with ``--nanostrain``
+    (``phase_unit="nanostrain"``), as stored otherwise."""
+    if not getattr(args, "nanostrain", False):
+        return File(args.path)
+    with File(args.path) as probe:
+        _check_nanostrain(probe)
+    try:
+        return File(args.path, phase_unit="nanostrain")
+    except ValueError as e:  # a refusal the check above did not foresee
+        raise AudaceDisplayError(f"--nanostrain: {e}") from None
+
+
 def _open_and_run(do_func, args) -> int:
-    with File(args.path) as f:
+    with _open(args) as f:
         return do_func(f, args)
 
 
@@ -909,6 +980,15 @@ def _add_heatmap_style(p: argparse.ArgumentParser) -> None:
     p.add_argument("--cmap", default=None, help="matplotlib colormap (default auto).")
     p.add_argument("--aspect", choices=["auto", "equal"], default="auto",
                    help="Aspect ratio (default auto).")
+
+
+def _add_unit(p: argparse.ArgumentParser) -> None:
+    k = "NANOSTRAIN_PER_RAD_METRE" if _K_NANOSTRAIN is None else f"{_K_NANOSTRAIN:g}"
+    p.add_argument("--nanostrain", action="store_true",
+                   help=f"Show a phase as strain, in nm/m: phase / gauge length x {k} "
+                        "(invisensing's constant, provisional), with the gauge length "
+                        "the file records. Refused for a file that holds no phase or "
+                        "does not record its gauge length.")
 
 
 def _add_backend(p: argparse.ArgumentParser) -> None:
@@ -985,6 +1065,10 @@ Examples
   # One location: waveform + FFT spectrum in a single figure
   audace-display inspect acq.dat --index 120
 
+  # A phase as strain, in nm/m (the file must record its gauge length)
+  audace-display phase.h5 --nanostrain
+  audace-display heatmap phase.h5 --nanostrain --variance log
+
   # Demodulation via an external script (no demod code shipped) -> heatmap
   audace-display demod raw.dat --script my_demod.py --save demod.png
 
@@ -1002,6 +1086,11 @@ Channels available per file mode:
   arctan_magnitude  arctan, magnitude (sqrt(I^2+Q^2))
   phase_amplitude   phase, magnitude
   (aliases: mag/amp -> magnitude, atan -> arctan, angle -> phase_wrapped)
+
+--nanostrain (every view but demod): a phase is shown as strain, in nm/m,
+  phase / gauge_length_m x NANOSTRAIN_PER_RAD_METRE (invisensing's constant,
+  provisional), with the gauge length the file records (invisensing >= 1.6.0).
+  A file that holds no phase, or a phase without its gauge length, is refused.
 
 Large files (200 MB - 10 GB): streamed, decimated reading, bounded RAM.
 
@@ -1203,6 +1292,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_heatmap_style(p_auto)
     _add_variance_opt(p_auto)
     _add_scope_opts(p_auto)   # raw -> animated oscilloscope
+    _add_unit(p_auto)
     _add_backend(p_auto)
     p_auto.set_defaults(func=lambda a: _open_and_run(do_auto, a))
 
@@ -1211,6 +1301,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Metadata + stats of the default channel.",
                         description=_INFO_DESC, epilog=_INFO_EPILOG)
     p_info.add_argument("path", help="File (.dat / .h5 / .hdf5 / .tdms / .sgy)")
+    _add_unit(p_info)
     p_info.set_defaults(func=lambda a: _open_and_run(do_info, a))
 
     # heatmap
@@ -1223,6 +1314,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_decim(p_heat)
     _add_heatmap_style(p_heat)
     _add_variance_opt(p_heat)
+    _add_unit(p_heat)
     _add_backend(p_heat)
     p_heat.set_defaults(func=lambda a: _open_and_run(do_heatmap, a))
 
@@ -1254,6 +1346,7 @@ def build_parser() -> argparse.ArgumentParser:
                              "trend removed) to avoid edge-ringing artifacts.")
     p_band.add_argument("--cmap", default=None, help="matplotlib colormap (default auto).")
     _add_variance_opt(p_band)
+    _add_unit(p_band)
     _add_backend(p_band)
     p_band.set_defaults(func=lambda a: _open_and_run(do_bandheatmaps, a))
 
@@ -1278,6 +1371,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_fft.add_argument("--db", action="store_true", help="Y axis in dB (ref = max).")
     p_fft.add_argument("--subsample-time", type=int, default=1, help="One pulse out of N.")
     p_fft.add_argument("--max-pulses", type=int, default=None, help="Limit the number of pulses read.")
+    _add_unit(p_fft)
     _add_backend(p_fft)
     p_fft.set_defaults(func=lambda a: _open_and_run(do_fft, a))
 
@@ -1290,6 +1384,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_window(p_tr)
     p_tr.add_argument("--position", "-p", type=float, required=True, help="Position (m).")
     _add_trace_opts(p_tr)
+    _add_unit(p_tr)
     _add_backend(p_tr)
     p_tr.set_defaults(func=lambda a: _open_and_run(do_trace, a))
 
@@ -1304,6 +1399,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_sc.add_argument("--duration", type=float, default=None,
                       help="Loop duration (s). Default: whole file.")
     _add_scope_opts(p_sc)
+    _add_unit(p_sc)
     _add_backend(p_sc)
     p_sc.set_defaults(func=lambda a: _open_and_run(do_scope, a))
 
@@ -1339,6 +1435,7 @@ def build_parser() -> argparse.ArgumentParser:
                        help="Limit the FFT frequency axis (Hz). Default Nyquist.")
     p_ins.add_argument("--fft-log", action="store_true",
                        help="Logarithmic FFT magnitude axis.")
+    _add_unit(p_ins)
     p_ins.set_defaults(func=lambda a: _open_and_run(do_inspect, a), _accepts_plugin_args=True)
 
     # demod (external plugin)

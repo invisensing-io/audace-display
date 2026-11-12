@@ -5,6 +5,10 @@ given mode. The *resolver* converts the raw buffer returned by
 :meth:`invisensing.File.read_lines` (i16 / u16 / f32, possibly a pair) into a
 physical ``float32`` value.
 
+A phase file opened with ``phase_unit="nanostrain"`` (``--nanostrain``,
+invisensing >= 1.6.0) is read as strain: the ``phase`` channel is then
+labelled ``strain (nm/m)`` and is no longer an angle.
+
 The mode comes from the file's content type (invisensing >= 1.4.0): since the
 Audace data format v1 a recording holds one quantity per file (``phase/`` and
 ``amplitude/``, ``arctan/`` and ``magnitude/``, ``i_component/`` and
@@ -26,6 +30,17 @@ from ._errors import AudaceDisplayError
 
 # Resolver: (File, raw_buffer) -> ndarray (rows, positions) float32
 Resolver = Callable[[object, np.ndarray], np.ndarray]
+
+#: The unit of a phase read as strain (invisensing ``File.unit``).
+STRAIN_UNIT = "nm/m"
+#: The label of the ``phase`` channel of a file read as strain.
+STRAIN_LABEL = f"strain ({STRAIN_UNIT})"
+
+
+def reads_strain(f) -> bool:
+    """Whether ``f`` was opened with ``phase_unit="nanostrain"``: its phase
+    samples are strain, in nm/m (invisensing >= 1.6.0)."""
+    return getattr(f, "phase_unit", "rad") == "nanostrain"
 
 # Common aliases -> canonical name
 ALIASES: dict[str, str] = {
@@ -142,7 +157,8 @@ def resolve_channel(
     ``name=None`` -> the mode's default channel. Raises
     :class:`AudaceDisplayError` if the name is unknown or unavailable for the
     file's mode. With the file ``f``, the label says when an amplitude is not
-    the card's magnitude (not in volts).
+    the card's magnitude (not in volts), and the phase of a file read as
+    strain is ``strain (nm/m)``, not an angle.
     """
     if name is None:
         canonical = DEFAULT_CHANNEL[mode]
@@ -163,4 +179,6 @@ def resolve_channel(
         )
     if canonical == "magnitude" and f is not None and not amplitude_in_volts(f):
         label = "amplitude (front-end count)"
+    if canonical == "phase" and f is not None and reads_strain(f):
+        label, is_angular = STRAIN_LABEL, False
     return canonical, resolver, label, is_angular
