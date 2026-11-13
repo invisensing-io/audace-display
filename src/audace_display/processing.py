@@ -3,6 +3,11 @@
 dB, FFT windows, temporal FFT, position parsing, colormap choice and automatic
 color limits. Everything here is **display / spectral analysis** of
 already-produced data -- no demodulation.
+
+A NaN sample is a missing one (a strain rate's first line, a line after a gap
+of the time axis): the scales (dB reference, log floor, color limits) are
+taken over the finite samples and a NaN stays NaN on screen;
+:func:`fill_missing` gives the spectra evenly spaced finite samples.
 """
 from __future__ import annotations
 
@@ -19,13 +24,14 @@ DB_EPS = 1e-12  # floor to avoid log(0)
 
 
 def to_db(data: np.ndarray, ref: Optional[float] = None) -> tuple[np.ndarray, float]:
-    """``20*log10(|x|/ref)`` with ``ref`` defaulting to the observed max.
+    """``20*log10(|x|/ref)`` with ``ref`` defaulting to the observed max (of
+    the finite samples; a NaN stays NaN).
 
     Returns ``(data_db, ref)``.
     """
     abs_data = np.abs(data)
     if ref is None:
-        ref = float(abs_data.max()) if abs_data.size else 1.0
+        ref = _finite_max(abs_data, 1.0)
     ref = max(ref, DB_EPS)
     db = 20.0 * np.log10(np.maximum(abs_data, DB_EPS) / ref)
     return db.astype(np.float32), ref
@@ -45,9 +51,39 @@ def to_log_variance(var: np.ndarray) -> np.ndarray:
     an array computed here as content type 28.
     """
     var = np.asarray(var, dtype=np.float64)
-    mx = float(var.max()) if var.size else 1.0
+    mx = _finite_max(var, 1.0)
     floor = max(mx * 1e-12, DB_EPS)
     return np.log10(np.maximum(var, floor)).astype(np.float32)
+
+
+def _finite_max(values: np.ndarray, empty: float) -> float:
+    """The largest finite value of ``values``, ``empty`` when there is none.
+    Without NaN or infinities this is ``values.max()``."""
+    if values.size == 0:
+        return empty
+    mx = float(values.max())
+    if np.isfinite(mx):
+        return mx
+    finite = values[np.isfinite(values)]
+    return float(finite.max()) if finite.size else empty
+
+
+def fill_missing(matrix: np.ndarray) -> np.ndarray:
+    """``matrix`` (time along axis 0) with every non-finite sample replaced by
+    the mean of the finite samples of its column (``0`` for a column without
+    any): what a band filter or a spectrum needs -- evenly spaced finite
+    samples. A missing sample then enters as the column's mean, i.e. ``0``
+    once the mean is removed. Returned as is when nothing is missing."""
+    m = np.asarray(matrix)
+    bad = ~np.isfinite(m)
+    if not bad.any():
+        return m
+    out = np.array(m, dtype=np.float64)
+    out[bad] = 0.0
+    n = (~bad).sum(axis=0)
+    mean = out.sum(axis=0) / np.maximum(n, 1)
+    out = np.where(bad, mean, out)
+    return out.astype(m.dtype if np.issubdtype(m.dtype, np.floating) else np.float64)
 
 
 def detrend_columns(matrix: np.ndarray) -> np.ndarray:
@@ -189,8 +225,10 @@ def remove_dc_and_trend(signal: np.ndarray, *, detrend: bool = True) -> np.ndarr
     sig = sig - np.nanmean(sig)
     if detrend and sig.size > 1:
         x = np.linspace(-1.0, 1.0, sig.size)
-        slope, intercept = np.polyfit(x, sig, deg=1)
-        sig = sig - (slope * x + intercept)
+        ok = np.isfinite(sig)  # the line is fitted to the samples there are
+        if ok.sum() > 1:
+            slope, intercept = np.polyfit(x[ok], sig[ok], deg=1)
+            sig = sig - (slope * x + intercept)
     return np.nan_to_num(sig)
 
 
@@ -271,7 +309,10 @@ def auto_clim(
     vmin: Optional[float] = None,
     vmax: Optional[float] = None,
 ) -> tuple[float, float]:
-    """Automatic color limits (overridable via ``vmin``/``vmax``)."""
+    """Automatic color limits (overridable via ``vmin``/``vmax``), from the
+    finite samples (a NaN cell is shown as missing, never as a limit)."""
+    if data.size and not np.isfinite(data).all():
+        data = data[np.isfinite(data)]
     if data.size == 0:
         return (vmin if vmin is not None else 0.0, vmax if vmax is not None else 1.0)
     if use_db:

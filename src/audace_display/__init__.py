@@ -5,7 +5,8 @@ Reads any format produced by the Filewriter (``.dat`` / ``.h5`` (``.hdf5``) /
 
 - a **heatmap** (distance x time waterfall) for demodulated files,
 - an **animated oscilloscope** for raw files,
-- a phase as strain, in nm/m, with ``--nanostrain`` (invisensing >= 1.6.0),
+- a phase as strain, in nm/m, with ``--nanostrain``, or as strain rate, in
+  nm/m/s, with ``--strain-rate`` (invisensing >= 1.6.0),
 
 with automatic mode detection. *Streaming* decimation to handle multi-GB files
 in bounded RAM.

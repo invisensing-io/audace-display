@@ -7,7 +7,11 @@ physical ``float32`` value.
 
 A phase file opened with ``phase_unit="nanostrain"`` (``--nanostrain``,
 invisensing >= 1.6.0) is read as strain: the ``phase`` channel is then
-labelled ``strain (nm/m)`` and is no longer an angle.
+labelled ``strain (nm/m)`` and is no longer an angle. Opened with
+``phase_unit="strain_rate"`` (``--strain-rate``) it is read as strain rate,
+``strain rate (nm/m/s)``: the strain increment from the previous line times
+the trigger frequency, NaN on the file's first line and after a gap of its
+time axis (invisensing computes it at the full line rate, while reading).
 
 The mode comes from the file's content type (invisensing >= 1.4.0): since the
 Audace data format v1 a recording holds one quantity per file (``phase/`` and
@@ -35,12 +39,23 @@ Resolver = Callable[[object, np.ndarray], np.ndarray]
 STRAIN_UNIT = "nm/m"
 #: The label of the ``phase`` channel of a file read as strain.
 STRAIN_LABEL = f"strain ({STRAIN_UNIT})"
+#: The unit of a phase read as strain rate (invisensing ``File.unit``).
+STRAIN_RATE_UNIT = "nm/m/s"
+#: The label of the ``phase`` channel of a file read as strain rate.
+STRAIN_RATE_LABEL = f"strain rate ({STRAIN_RATE_UNIT})"
 
 
 def reads_strain(f) -> bool:
     """Whether ``f`` was opened with ``phase_unit="nanostrain"``: its phase
     samples are strain, in nm/m (invisensing >= 1.6.0)."""
     return getattr(f, "phase_unit", "rad") == "nanostrain"
+
+
+def reads_strain_rate(f) -> bool:
+    """Whether ``f`` was opened with ``phase_unit="strain_rate"``: its phase
+    samples are strain rate, in nm/m/s, NaN on the first line and after a
+    gap of the time axis (invisensing >= 1.6.0)."""
+    return getattr(f, "phase_unit", "rad") == "strain_rate"
 
 # Common aliases -> canonical name
 ALIASES: dict[str, str] = {
@@ -158,7 +173,8 @@ def resolve_channel(
     :class:`AudaceDisplayError` if the name is unknown or unavailable for the
     file's mode. With the file ``f``, the label says when an amplitude is not
     the card's magnitude (not in volts), and the phase of a file read as
-    strain is ``strain (nm/m)``, not an angle.
+    strain is ``strain (nm/m)``, as strain rate ``strain rate (nm/m/s)``, not
+    an angle.
     """
     if name is None:
         canonical = DEFAULT_CHANNEL[mode]
@@ -181,4 +197,6 @@ def resolve_channel(
         label = "amplitude (front-end count)"
     if canonical == "phase" and f is not None and reads_strain(f):
         label, is_angular = STRAIN_LABEL, False
+    if canonical == "phase" and f is not None and reads_strain_rate(f):
+        label, is_angular = STRAIN_RATE_LABEL, False
     return canonical, resolver, label, is_angular

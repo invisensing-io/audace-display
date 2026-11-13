@@ -13,6 +13,11 @@ Two entry points:
 ``transform`` is a callable ``raw_chunk (rows, line_size) -> (rows, positions)``
 ``float32``: either a channel resolver (:mod:`audace_display.channels`) or an
 external demod plugin (:mod:`audace_display.demod`).
+
+Every chunk is read at the full line rate and reduced afterwards: a strain
+rate (``phase_unit="strain_rate"``) is computed by invisensing on consecutive
+lines while it reads them, and only then decimated -- never derived from
+decimated strain.
 """
 from __future__ import annotations
 
@@ -190,11 +195,14 @@ def load_decimated(
     start_distance: Optional[float] = None,
     end_distance: Optional[float] = None,
     max_pulses: Optional[int] = None,
+    skip_nan: bool = False,
 ) -> DecimatedResult:
     """Decimated waterfall, computed in a single streaming pass.
 
     Space is *pooled* by mean (or max|.| if ``reduce='peak'``); time is
     aggregated by ``reduce`` in :data:`audace_display.decimate.REDUCERS`.
+    ``skip_nan``: a NaN sample is missing, each time bin is reduced over the
+    others (see :class:`~audace_display.decimate.TimeBinAccumulator`).
     """
     p0, p1 = _pulse_range(f, start_time, duration)
     if max_pulses is not None:
@@ -227,7 +235,9 @@ def load_decimated(
             col_edges = decimate.bin_edges(width, n_space)
             t_factor = max(1, math.ceil(total_p / max_time_bins))
             n_time = math.ceil(total_p / t_factor)
-            acc = decimate.TimeBinAccumulator(n_time, n_space, t_factor, reduce)
+            acc = decimate.TimeBinAccumulator(
+                n_time, n_space, t_factor, reduce, skip_nan=skip_nan
+            )
             geom = dict(
                 d0=d0, d1=d1, d_step=d_step, n_space=n_space,
                 col_edges=col_edges, t_factor=t_factor, n_pos=n_pos, width=width,

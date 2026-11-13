@@ -9,6 +9,11 @@ data to screen resolution. Two primitives:
 
 Plus :class:`TimeBinAccumulator`, an **incremental** reducer of the time axis,
 fed chunk by chunk during streaming (RAM independent of file size).
+
+A NaN sample is a missing one (a strain rate's first line, a line after a
+gap of the time axis): the envelopes skip it (a bin of NaN only is NaN), and
+the accumulator skips it when asked (``skip_nan``). Data without NaN is
+reduced to the same bits either way.
 """
 from __future__ import annotations
 
@@ -54,6 +59,7 @@ def minmax_envelope(x: np.ndarray, n_out: int) -> tuple[np.ndarray, np.ndarray, 
 
     Returns ``(centers, lo, hi)``: the bins' center indices and the per-bin
     min/max. If ``len(x) <= n_out``, returns the signal as-is (``lo == hi == x``).
+    NaN samples are skipped (``fmin`` / ``fmax``); a bin of NaN only is NaN.
     """
     x = np.asarray(x)
     n = x.shape[0]
@@ -64,8 +70,8 @@ def minmax_envelope(x: np.ndarray, n_out: int) -> tuple[np.ndarray, np.ndarray, 
         return idx, x.astype(np.float32), x.astype(np.float32)
     edges = bin_edges(n, n_out)
     starts = edges[:-1]
-    lo = np.minimum.reduceat(x, starts)
-    hi = np.maximum.reduceat(x, starts)
+    lo = np.fmin.reduceat(x, starts)
+    hi = np.fmax.reduceat(x, starts)
     centers = (edges[:-1] + (edges[1:] - 1)) / 2.0
     return centers, lo.astype(np.float32), hi.astype(np.float32)
 
@@ -75,7 +81,8 @@ def peak_line(y: np.ndarray, n_out: int) -> tuple[np.ndarray, np.ndarray]:
 
     Returns ``(x_idx, y)`` where each bin yields two points (min then max) -> an
     "oscilloscope" polyline of ``2*n_out`` points. If the signal already fits in
-    ``2*n_out`` points, returns it as-is.
+    ``2*n_out`` points, returns it as-is. NaN samples are skipped; a bin of NaN
+    only is NaN (a gap in the polyline).
     """
     y = np.asarray(y)
     n = y.shape[0]
@@ -85,8 +92,8 @@ def peak_line(y: np.ndarray, n_out: int) -> tuple[np.ndarray, np.ndarray]:
         return np.arange(n, dtype=np.float64), y.astype(np.float32)
     edges = bin_edges(n, n_out)
     starts = edges[:-1]
-    mins = np.minimum.reduceat(y, starts)
-    maxs = np.maximum.reduceat(y, starts)
+    mins = np.fmin.reduceat(y, starts)
+    maxs = np.fmax.reduceat(y, starts)
     centers = (edges[:-1] + edges[1:] - 1) / 2.0
     x = np.repeat(centers, 2)
     out = np.empty(2 * centers.shape[0], dtype=np.float32)
@@ -104,9 +111,16 @@ class TimeBinAccumulator:
 
     ``op`` in :data:`REDUCERS`. For ``peak``, the input is assumed to be already
     reduced to absolute value on the spatial side (see ``space_op`` in the reader).
+
+    ``skip_nan``: a NaN sample is a missing one -- each cell is reduced over its
+    other samples, and a cell with none is NaN. Off, a NaN propagates to its
+    cell (the historical behaviour). Without NaN both give the same bits.
     """
 
-    def __init__(self, n_time_bins: int, n_space_bins: int, t_factor: int, op: str):
+    def __init__(
+        self, n_time_bins: int, n_space_bins: int, t_factor: int, op: str,
+        *, skip_nan: bool = False,
+    ):
         if op not in REDUCERS:
             raise AudaceDisplayError(
                 f"unknown reducer: '{op}'. Known: {', '.join(REDUCERS)}."
@@ -123,6 +137,9 @@ class TimeBinAccumulator:
         self._peak = np.zeros(shape, np.float64) if op == "peak" else None
         self._count = np.zeros(self.n_time, np.int64)
         self._row = 0  # global count of consumed lines
+        self.skip_nan = bool(skip_nan)
+        # `skip_nan`: NaN samples per cell, allocated at the first NaN.
+        self._missing: np.ndarray | None = None
 
     def add(self, block: np.ndarray) -> None:
         """Accumulate a block ``(rows, n_space)`` of consecutive lines."""
@@ -139,6 +156,13 @@ class TimeBinAccumulator:
             if b >= self.n_time:  # guard (partial last bin)
                 b = self.n_time - 1
             sub = block[seg]
+            if self.skip_nan:
+                nan = np.isnan(sub)
+                if nan.any():
+                    if self._missing is None:
+                        self._missing = np.zeros((self.n_time, self.n_space), np.int64)
+                    self._missing[b] += nan.sum(axis=0)
+                    sub = np.where(nan, 0.0, sub)
             if self._sum is not None:
                 self._sum[b] += sub.sum(axis=0)
             if self._sumsq is not None:
@@ -150,6 +174,8 @@ class TimeBinAccumulator:
 
     def result(self) -> np.ndarray:
         """Final ``(n_time, n_space)`` float32 array."""
+        if self._missing is not None:
+            return self._result_skipping_nan()
         cnt = np.maximum(self._count, 1)[:, None]
         if self.op == "mean":
             out = self._sum / cnt
@@ -164,4 +190,25 @@ class TimeBinAccumulator:
             out = np.maximum(self._sumsq / cnt - np.square(mean), 0.0)
         else:  # peak
             out = self._peak
+        return out.astype(np.float32)
+
+    def _result_skipping_nan(self) -> np.ndarray:
+        """:meth:`result` over each cell's non-NaN samples; NaN where a bin
+        that received lines holds no sample in that cell."""
+        present = self._count[:, None] - self._missing
+        empty = (present == 0) & (self._count[:, None] > 0)
+        cnt = np.maximum(present, 1)
+        if self.op == "mean":
+            out = self._sum / cnt
+        elif self.op == "rms":
+            out = np.sqrt(self._sumsq / cnt)
+        elif self.op == "std":
+            mean = self._sum / cnt
+            out = np.sqrt(np.maximum(self._sumsq / cnt - np.square(mean), 0.0))
+        elif self.op == "variance":
+            mean = self._sum / cnt
+            out = np.maximum(self._sumsq / cnt - np.square(mean), 0.0)
+        else:  # peak
+            out = self._peak.copy()
+        out[empty] = np.nan
         return out.astype(np.float32)

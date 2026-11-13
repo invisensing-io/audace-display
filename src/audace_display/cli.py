@@ -18,7 +18,14 @@ from invisensing import File, Mode
 
 from . import decimate, processing, reader
 from ._errors import AudaceDisplayError
-from .channels import DEFAULT_CHANNEL, STRAIN_UNIT, reads_strain, resolve_channel
+from .channels import (
+    DEFAULT_CHANNEL,
+    STRAIN_RATE_UNIT,
+    STRAIN_UNIT,
+    reads_strain,
+    reads_strain_rate,
+    resolve_channel,
+)
 
 try:
     from . import __version__
@@ -30,6 +37,13 @@ try:
     from invisensing import NANOSTRAIN_PER_RAD_METRE as _K_NANOSTRAIN
 except ImportError:  # invisensing < 1.6.0: --nanostrain then says what to install
     _K_NANOSTRAIN = None
+
+#: The options that read a phase in another unit: option -> (invisensing
+#: ``phase_unit``, what the phase becomes, its unit).
+_PHASE_UNIT_OPTIONS = {
+    "--nanostrain": ("nanostrain", "strain", STRAIN_UNIT),
+    "--strain-rate": ("strain_rate", "strain rate", STRAIN_RATE_UNIT),
+}
 
 # FFT memory budget (float32 cells) before spatial subsampling.
 _FFT_MAX_CELLS = 256 * 1024 * 1024 // 4
@@ -121,6 +135,9 @@ def _render_heatmap(f, args, transform, base_label: str, is_angular: bool, subti
         start_distance=args.start_distance,
         end_distance=args.end_distance,
         max_pulses=args.max_pulses,
+        # A strain rate is NaN on the file's first line and after a gap of
+        # its time axis: a missing sample, each bin reduced over the others.
+        skip_nan=reads_strain_rate(f),
     )
     data = res.data
     use_db = getattr(args, "db", False)
@@ -283,17 +300,23 @@ def _format_compression(f) -> Optional[str]:
         return None
     step = getattr(f, "quantization_step_rad", None)
     err = getattr(f, "quantization_max_error_rad", None)
-    # Read as strain: the same bounds in nm/m beside the radians.
-    factor = getattr(f, "nanostrain_per_rad", None) if reads_strain(f) else None
+    # Read as strain: the same bounds in nm/m beside the radians. As strain
+    # rate: a difference of two samples, on the same grid, its error up to
+    # twice theirs.
+    factor, unit, twice = None, "", 1
+    if reads_strain(f):
+        factor, unit = getattr(f, "nanostrain_per_rad", None), STRAIN_UNIT
+    elif reads_strain_rate(f):
+        factor, unit, twice = getattr(f, "strain_rate_per_rad", None), STRAIN_RATE_UNIT, 2
 
     def strain(v: float) -> str:
-        return f" = {v * factor:.3e} {STRAIN_UNIT}" if factor else ""
+        return f" = {v * factor:.3e} {unit}" if factor else ""
 
     detail = []
     if step is not None:
         detail.append(f"phase on a {step:.3e} rad grid{strain(step)}")
     if err is not None:
-        detail.append(f"error <= {err:.3e} rad{strain(err)}")
+        detail.append(f"error <= {err:.3e} rad{strain(twice * err)}")
     return comp + (f" ({', '.join(detail)})" if detail else "")
 
 
@@ -344,6 +367,19 @@ def do_info(f, args) -> int:
             f"  Strain         : {STRAIN_UNIT} = rad x {f.nanostrain_per_rad:.6g} "
             f"(= {_K_NANOSTRAIN:g} / {gauge:g} m)"
         )
+    if reads_strain_rate(f):
+        hz = reader.line_rate_hz(f)
+        print(
+            f"  Strain rate    : {STRAIN_RATE_UNIT} = (rad[n] - rad[n-1]) x "
+            f"{f.strain_rate_per_rad:.6g} (= {_K_NANOSTRAIN:g} / {gauge:g} m x "
+            f"{_format_hz(hz)} Hz); line 0 has none (NaN)"
+        )
+        gaps = getattr(f, "time_gaps", ())
+        if gaps:
+            n_gap = sum(b - a for a, b in gaps)
+            shown = ", ".join(f"{a}" if b == a + 1 else f"{a}-{b - 1}" for a, b in gaps[:5])
+            more = ", ..." if len(gaps) > 5 else ""
+            print(f"  Time gaps      : {n_gap:,} line(s) after lost shots, NaN: {shown}{more}")
     print(f"  Timestamp      : {_format_timestamp(f)}")
     if f.num_lines > 1:
         last = reader.absolute_time_ns(f, f.num_lines - 1)
@@ -380,13 +416,27 @@ def do_info(f, args) -> int:
     if n_stat > 0:
         buf = f.read_lines(n_stat)
         data = resolver(f, buf)
-        mi, p1, p50, p99, ma = np.percentile(data, [0, 1, 50, 99, 100]).tolist()
-        shown = f" -- {label}" if reads_strain(f) and canonical == "phase" else ""
-        print(
-            f"\n  Stats for channel '{canonical}'{shown} over {n_stat:,} pulses:"
-            f"\n    min={mi:+.4g}  p1={p1:+.4g}  p50={p50:+.4g}  p99={p99:+.4g}  max={ma:+.4g}"
-            f"\n    mean={data.mean():+.4g}  std={data.std():.4g}"
+        shown = (
+            f" -- {label}"
+            if (reads_strain(f) or reads_strain_rate(f)) and canonical == "phase"
+            else ""
         )
+        # A missing sample (a strain rate's line 0, NaN) is no statistic.
+        finite = np.isfinite(data)
+        skipped = int(data.size - np.count_nonzero(finite))
+        if skipped:
+            data = data[finite]
+        note = f" ({skipped:,} NaN/inf samples left out)" if skipped else ""
+        if data.size:
+            mi, p1, p50, p99, ma = np.percentile(data, [0, 1, 50, 99, 100]).tolist()
+            print(
+                f"\n  Stats for channel '{canonical}'{shown} over {n_stat:,} pulses{note}:"
+                f"\n    min={mi:+.4g}  p1={p1:+.4g}  p50={p50:+.4g}  p99={p99:+.4g}  max={ma:+.4g}"
+                f"\n    mean={data.mean():+.4g}  std={data.std():.4g}"
+            )
+        else:
+            print(f"\n  Stats for channel '{canonical}'{shown} over {n_stat:,} pulses: "
+                  f"no finite sample{note}")
     return 0
 
 
@@ -512,12 +562,16 @@ def do_bandheatmaps(f, args) -> int:
         raise AudaceDisplayError("not enough pulses for a band analysis.")
 
     variance = args.variance
+    # A strain rate is NaN on the file's first line and after a gap of its
+    # time axis: missing in the panels' time bins, and the column's mean (0
+    # once detrended) for the band filters, which need evenly spaced samples.
+    rate = reads_strain_rate(f)
 
     def _bin_time(sig: np.ndarray, op: str) -> np.ndarray:
         n_pulses = sig.shape[0]
         t_factor = max(1, math.ceil(n_pulses / args.max_time_bins))
         n_time = math.ceil(n_pulses / t_factor)
-        acc = decimate.TimeBinAccumulator(n_time, sig.shape[1], t_factor, op)
+        acc = decimate.TimeBinAccumulator(n_time, sig.shape[1], t_factor, op, skip_nan=rate)
         acc.add(sig)  # whole matrix is already in RAM -> one pass
         return acc.result()
 
@@ -544,7 +598,8 @@ def do_bandheatmaps(f, args) -> int:
     # position first (default): a demodulated channel carries a DC offset + slow
     # drift whose start/end discontinuity would otherwise leak broadband ringing
     # into every band (use --no-detrend to keep the raw signal, incl. DC).
-    band_source = matrix if args.no_detrend else processing.detrend_columns(matrix)
+    filled = processing.fill_missing(matrix) if rate else matrix
+    band_source = filled if args.no_detrend else processing.detrend_columns(filled)
     for f_lo, f_hi in bands:
         band_sig = processing.band_limited(band_source, fs=trig, f_lo=f_lo, f_hi=f_hi)
         b_data = _bin_time(band_sig, "variance" if variance else "rms")
@@ -665,6 +720,11 @@ def do_fft(f, args) -> int:
     )
     if data.shape[0] < 2:
         raise AudaceDisplayError("not enough pulses for an FFT.")
+    if reads_strain_rate(f):
+        # NaN on the file's first line and after a gap of its time axis: a
+        # spectrum needs evenly spaced samples, a missing one enters as the
+        # column's mean (0 once the mean is removed).
+        data = processing.fill_missing(data)
 
     def _y(amp: np.ndarray) -> tuple[np.ndarray, str]:
         if args.db:
@@ -741,6 +801,10 @@ def do_scope(f, args) -> int:
     # Frozen Y bounds (otherwise autoscale makes the plot jitter) from a sample.
     f.seek_lines(p0)
     sample = resolver(f, f.read_lines(min(64, n_window)))
+    if not np.isfinite(sample).all():  # a strain rate's line 0 is NaN
+        sample = sample[np.isfinite(sample)]
+    if sample.size == 0:
+        sample = np.zeros(1, np.float32)
     lo = float(np.percentile(sample, 0.1))
     hi = float(np.percentile(sample, 99.9))
     pad = 0.1 * ((hi - lo) or abs(hi) or 1.0)
@@ -788,9 +852,11 @@ def _inspect_source(f, args):
     transform output, which may differ from ``f.positions_per_line``.
     """
     if args.script:
-        if reads_strain(f):
+        if reads_strain(f) or reads_strain_rate(f):
+            option = "--nanostrain" if reads_strain(f) else "--strain-rate"
+            what = "strain" if reads_strain(f) else "strain rate"
             raise AudaceDisplayError(
-                "--nanostrain shows a built-in phase channel as strain; a --script "
+                f"{option} shows a built-in phase channel as {what}; a --script "
                 "plugin reads the file's own samples and labels its own output. "
                 "Drop one of the two."
             )
@@ -891,42 +957,77 @@ def do_auto(f, args) -> int:
 # --- File-opening wrappers ---------------------------------------------------
 
 
-def _check_nanostrain(f) -> None:
-    """Refuse ``--nanostrain`` on a file that cannot be read as strain, in
-    the CLI's words: a file that holds no phase, a phase that does not record
-    its gauge length (no gauge length is ever assumed)."""
-    if not hasattr(f, "gauge_length_m"):
+def _check_phase_unit(f, option: str) -> None:
+    """Refuse ``option`` (``--nanostrain``, ``--strain-rate``) on a file that
+    cannot be read so, in the CLI's words: a file that holds no phase, a
+    phase that does not record its gauge length (no gauge length is ever
+    assumed), and for ``--strain-rate`` a file whose trigger frequency is
+    unknown."""
+    _, what, unit = _PHASE_UNIT_OPTIONS[option]
+    if not hasattr(f, "gauge_length_m") or (
+        option == "--strain-rate" and not hasattr(f, "strain_rate_per_rad")
+    ):
         raise AudaceDisplayError(
-            "--nanostrain needs invisensing >= 1.6.0 (pip install -U invisensing)."
+            f"{option} needs invisensing >= 1.6.0 (pip install -U invisensing)."
         )
     content_type, name = _content_type(f)
     if f.mode not in (Mode.PHASE, Mode.PHASE_AMPLITUDE):
         raise AudaceDisplayError(
-            f"--nanostrain shows a phase as strain ({STRAIN_UNIT}), and {f.path.name} "
+            f"{option} shows a phase as {what} ({unit}), and {f.path.name} "
             f"holds '{name}' (content type {content_type}, mode {f.mode.value}), "
-            "not a phase. Drop --nanostrain."
+            f"not a phase. Drop {option}."
         )
     if f.gauge_length_m is None:
         raise AudaceDisplayError(
-            f"--nanostrain needs the gauge length the phase was measured over, and "
+            f"{option} needs the gauge length the phase was measured over, and "
             f"{f.path.name} ('{name}', content type {content_type}) does not record "
             "its gauge length (a recording made before 2026-11, a MOZART or "
             "MOZART_PLUS phase, or a file converted without it). No gauge length is "
-            "assumed: drop --nanostrain to show the phase in radians."
+            f"assumed: drop {option} to show the phase in radians."
         )
+    if option == "--strain-rate" and not reader.line_rate_hz(f) > 0.0:
+        raise AudaceDisplayError(
+            f"--strain-rate multiplies each line's strain increment by the trigger "
+            f"frequency, and {f.path.name} does not know its own (trigger frequency "
+            f"{f.trig_frequency} Hz). No rate is assumed: use --nanostrain to show "
+            "the strain."
+        )
+
+
+def _check_nanostrain(f) -> None:
+    """:func:`_check_phase_unit` for ``--nanostrain``."""
+    _check_phase_unit(f, "--nanostrain")
+
+
+def _check_strain_rate(f) -> None:
+    """:func:`_check_phase_unit` for ``--strain-rate``."""
+    _check_phase_unit(f, "--strain-rate")
+
+
+def _requested_unit(args) -> Optional[str]:
+    """The ``--nanostrain`` / ``--strain-rate`` option of ``args``, or
+    ``None`` (radians, as stored)."""
+    if getattr(args, "strain_rate", False):
+        return "--strain-rate"
+    if getattr(args, "nanostrain", False):
+        return "--nanostrain"
+    return None
 
 
 def _open(args) -> File:
     """The file of ``args``: read as strain with ``--nanostrain``
-    (``phase_unit="nanostrain"``), as stored otherwise."""
-    if not getattr(args, "nanostrain", False):
+    (``phase_unit="nanostrain"``), as strain rate with ``--strain-rate``
+    (``phase_unit="strain_rate"``), as stored otherwise."""
+    option = _requested_unit(args)
+    if option is None:
         return File(args.path)
+    check = _check_strain_rate if option == "--strain-rate" else _check_nanostrain
     with File(args.path) as probe:
-        _check_nanostrain(probe)
+        check(probe)
     try:
-        return File(args.path, phase_unit="nanostrain")
+        return File(args.path, phase_unit=_PHASE_UNIT_OPTIONS[option][0])
     except ValueError as e:  # a refusal the check above did not foresee
-        raise AudaceDisplayError(f"--nanostrain: {e}") from None
+        raise AudaceDisplayError(f"{option}: {e}") from None
 
 
 def _open_and_run(do_func, args) -> int:
@@ -984,11 +1085,20 @@ def _add_heatmap_style(p: argparse.ArgumentParser) -> None:
 
 def _add_unit(p: argparse.ArgumentParser) -> None:
     k = "NANOSTRAIN_PER_RAD_METRE" if _K_NANOSTRAIN is None else f"{_K_NANOSTRAIN:g}"
-    p.add_argument("--nanostrain", action="store_true",
-                   help=f"Show a phase as strain, in nm/m: phase / gauge length x {k} "
-                        "(invisensing's constant), with the gauge length "
-                        "the file records. Refused for a file that holds no phase or "
-                        "does not record its gauge length.")
+    unit = p.add_mutually_exclusive_group()
+    unit.add_argument("--nanostrain", action="store_true",
+                      help=f"Show a phase as strain, in nm/m: phase / gauge length x {k} "
+                           "(invisensing's constant), with the gauge length "
+                           "the file records. Refused for a file that holds no phase or "
+                           "does not record its gauge length.")
+    unit.add_argument("--strain-rate", action="store_true",
+                      help="Show a phase as strain rate, in nm/m/s: the strain increment "
+                           "from the previous line times the real trigger frequency, "
+                           f"(phase[n] - phase[n-1]) / gauge length x {k} x f_trig, "
+                           "computed at the full line rate before any decimation. The "
+                           "file's first line, and a line after a gap of its time axis "
+                           "(lost shots), have none (NaN). Refused as --nanostrain, and "
+                           "for a file without a trigger frequency.")
 
 
 def _add_backend(p: argparse.ArgumentParser) -> None:
@@ -1069,6 +1179,10 @@ Examples
   audace-display phase.h5 --nanostrain
   audace-display heatmap phase.h5 --nanostrain --variance log
 
+  # ...or as strain rate, in nm/m/s
+  audace-display phase.h5 --strain-rate
+  audace-display fft phase.h5 --strain-rate --position 120
+
   # Demodulation via an external script (no demod code shipped) -> heatmap
   audace-display demod raw.dat --script my_demod.py --save demod.png
 
@@ -1091,6 +1205,17 @@ Channels available per file mode:
   phase / gauge_length_m x NANOSTRAIN_PER_RAD_METRE (invisensing's constant,
   110.37), with the gauge length the file records (invisensing >= 1.6.0).
   A file that holds no phase, or a phase without its gauge length, is refused.
+
+--strain-rate (every view but demod; not with --nanostrain): a phase is shown
+  as strain rate, in nm/m/s: the strain increment from the previous line
+  times the real trigger frequency,
+      (strain[n] - strain[n-1]) x f_trig
+    = (phase[n] - phase[n-1]) / gauge_length_m x 110.37 x f_trig,
+  computed by invisensing at the full line rate, then decimated. The file's
+  first line, and a line after a gap of its time axis (lost shots), have no
+  increment over one period: NaN, shown as missing (skipped by the time bins
+  and the scales; the column's mean in the FFT and band filters). Refused as
+  --nanostrain, and for a file without a trigger frequency.
 
 Large files (200 MB - 10 GB): streamed, decimated reading, bounded RAM.
 
