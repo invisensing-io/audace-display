@@ -49,17 +49,23 @@ impl StartupArgs {
                 "--python" => out.python = Some(value("--python")?),
                 "--view" => {
                     let v = value("--view")?;
-                    out.view = Some(View::from_cli(&v).ok_or_else(|| format!("unknown view '{v}'"))?);
+                    out.view =
+                        Some(View::from_cli(&v).ok_or_else(|| format!("unknown view '{v}'"))?);
                 }
                 "--screenshot" => out.screenshot = Some(PathBuf::from(value("--screenshot")?)),
                 "--unit" => out.unit = Some(value("--unit")?),
                 "--zoom" => {
                     let z = value("--zoom")?;
-                    out.zoom = Some(parse_zoom(&z).ok_or_else(|| format!("--zoom takes T0:T1 or T0:T1:D0:D1, got '{z}'"))?);
+                    out.zoom =
+                        Some(parse_zoom(&z).ok_or_else(|| {
+                            format!("--zoom takes T0:T1 or T0:T1:D0:D1, got '{z}'")
+                        })?);
                 }
                 "--set" => {
                     let kv = value("--set")?;
-                    let (k, v) = kv.split_once('=').ok_or_else(|| format!("--set takes dest=value, got '{kv}'"))?;
+                    let (k, v) = kv
+                        .split_once('=')
+                        .ok_or_else(|| format!("--set takes dest=value, got '{kv}'"))?;
                     out.sets.push((k.trim().to_string(), v.trim().to_string()));
                 }
                 "-h" | "--help" => return Err(String::new()),
@@ -86,10 +92,24 @@ impl StartupArgs {
 }
 
 fn parse_zoom(text: &str) -> Option<Window> {
-    let v: Vec<f64> = text.split(':').map(|s| s.trim().parse::<f64>()).collect::<Result<_, _>>().ok()?;
+    let v: Vec<f64> = text
+        .split(':')
+        .map(|s| s.trim().parse::<f64>())
+        .collect::<Result<_, _>>()
+        .ok()?;
     match v[..] {
-        [t0, t1] if t1 > t0 => Some(Window { t0, t1, d0: None, d1: None }),
-        [t0, t1, d0, d1] if t1 > t0 && d1 > d0 => Some(Window { t0, t1, d0: Some(d0), d1: Some(d1) }),
+        [t0, t1] if t1 > t0 => Some(Window {
+            t0,
+            t1,
+            d0: None,
+            d1: None,
+        }),
+        [t0, t1, d0, d1] if t1 > t0 && d1 > d0 => Some(Window {
+            t0,
+            t1,
+            d0: Some(d0),
+            d1: Some(d1),
+        }),
         _ => None,
     }
 }
@@ -118,7 +138,12 @@ pub struct Notice {
 enum Inflight {
     Hello,
     Open,
-    Render { view: View, key: String, superseded: bool, cancelled_at: Option<Instant> },
+    Render {
+        view: View,
+        key: String,
+        superseded: bool,
+        cancelled_at: Option<Instant>,
+    },
     Frame,
 }
 
@@ -175,7 +200,10 @@ impl ScopePlayer {
     /// actual pulse rate x speed`, looping over the window.
     pub fn local_now(&self, now: Instant) -> u64 {
         let span = self.result.meta.n_window.max(1) as f64;
-        let pos = self.anchor_local + now.duration_since(self.anchor).as_secs_f64() * self.result.meta.trig_freq * self.speed;
+        let pos = self.anchor_local
+            + now.duration_since(self.anchor).as_secs_f64()
+                * self.result.meta.trig_freq
+                * self.speed;
         (pos.rem_euclid(span)) as u64
     }
 
@@ -247,11 +275,22 @@ pub struct GuiApp {
 }
 
 impl GuiApp {
-    pub fn new(settings: Settings, settings_warning: Option<String>, startup: StartupArgs, waker: Waker) -> GuiApp {
-        let interpreter = startup.python.clone().unwrap_or_else(|| settings.interpreter.clone());
+    pub fn new(
+        settings: Settings,
+        settings_warning: Option<String>,
+        startup: StartupArgs,
+        waker: Waker,
+    ) -> GuiApp {
+        let interpreter = startup
+            .python
+            .clone()
+            .unwrap_or_else(|| settings.interpreter.clone());
         let mut notices = Vec::new();
         if let Some(w) = settings_warning {
-            notices.push(Notice { level: Level::Warning, text: format!("Settings: {w}") });
+            notices.push(Notice {
+                level: Level::Warning,
+                text: format!("Settings: {w}"),
+            });
         }
         GuiApp {
             interpreter_input: settings.interpreter.clone(),
@@ -311,10 +350,17 @@ impl GuiApp {
         self.inflight.clear();
         self.current_render = None;
         self.progress = None;
+        if let Some(p) = self.opening.take() {
+            self.startup.file = Some(p);
+        }
+        // The oscilloscope's session lived in the old worker.
         self.scope = None;
+        self.results.remove(&View::Scope);
         self.hello = None;
         let mut spawned = WorkerProcess::spawn(&self.interpreter, self.waker.clone());
-        if let (Err(_), Some(fallback)) = (&spawned, worker::fallback_interpreter(&self.interpreter)) {
+        if let (Err(_), Some(fallback)) =
+            (&spawned, worker::fallback_interpreter(&self.interpreter))
+        {
             spawned = WorkerProcess::spawn(fallback, self.waker.clone());
             if spawned.is_ok() {
                 self.interpreter = fallback.to_string();
@@ -327,7 +373,9 @@ impl GuiApp {
                 match w.request("hello", fields) {
                     Ok(id) => {
                         self.inflight.insert(id, Inflight::Hello);
-                        self.worker_state = WorkerState::Starting { since: Instant::now() };
+                        self.worker_state = WorkerState::Starting {
+                            since: Instant::now(),
+                        };
                         self.worker = Some(w);
                     }
                     Err(e) => self.worker_failed(e),
@@ -364,13 +412,17 @@ impl GuiApp {
     }
 
     pub fn stderr_tail(&self, lines: usize) -> Vec<String> {
-        self.worker.as_ref().map(|w| w.stderr_tail(lines)).unwrap_or_default()
+        self.worker
+            .as_ref()
+            .map(|w| w.stderr_tail(lines))
+            .unwrap_or_default()
     }
 
     pub fn worker_command(&self) -> String {
-        self.worker.as_ref().map(|w| w.command_line.clone()).unwrap_or_else(|| {
-            format!("{} -m {}", self.interpreter, worker::WORKER_MODULE)
-        })
+        self.worker
+            .as_ref()
+            .map(|w| w.command_line.clone())
+            .unwrap_or_else(|| format!("{} -m {}", self.interpreter, worker::WORKER_MODULE))
     }
 
     fn request(&mut self, cmd: &str, fields: Map<String, Value>, what: Inflight) -> Option<u64> {
@@ -382,7 +434,11 @@ impl GuiApp {
             }
             Err(e) => {
                 let tail = worker.stderr_tail(12).join("\n");
-                self.worker_failed(if tail.is_empty() { e } else { format!("{e}:\n{tail}") });
+                self.worker_failed(if tail.is_empty() {
+                    e
+                } else {
+                    format!("{e}:\n{tail}")
+                });
                 None
             }
         }
@@ -407,7 +463,11 @@ impl GuiApp {
         if let WorkerState::Starting { since } = self.worker_state
             && now.duration_since(since) > HELLO_TIMEOUT
         {
-            self.worker_failed(format!("`{}` did not answer within {} s.", self.worker_command(), HELLO_TIMEOUT.as_secs()));
+            self.worker_failed(format!(
+                "`{}` did not answer within {} s.",
+                self.worker_command(),
+                HELLO_TIMEOUT.as_secs()
+            ));
         }
         self.check_cancel_grace(now);
         self.poll_dialog();
@@ -420,7 +480,10 @@ impl GuiApp {
             matches!(w, Inflight::Render { cancelled_at: Some(t), .. } if now.duration_since(*t) > CANCEL_GRACE)
         });
         if stuck {
-            self.notify(Level::Info, "A cancelled computation did not stop: the worker was restarted.");
+            self.notify(
+                Level::Info,
+                "A cancelled computation did not stop: the worker was restarted.",
+            );
             self.start_worker();
         }
     }
@@ -442,9 +505,14 @@ impl GuiApp {
             }
             return;
         }
-        let Some(what) = self.inflight.remove(&id) else { return };
+        let Some(what) = self.inflight.remove(&id) else {
+            return;
+        };
         let error: Option<WorkerError> = (msg.kind() == "error").then(|| {
-            msg.parse().unwrap_or_else(|e| WorkerError { kind: "protocol".into(), message: e.to_string() })
+            msg.parse().unwrap_or_else(|e| WorkerError {
+                kind: "protocol".into(),
+                message: e.to_string(),
+            })
         });
         match what {
             Inflight::Hello => match error {
@@ -523,12 +591,14 @@ impl GuiApp {
         }
         self.hello = Some(hello);
         self.worker_state = WorkerState::Ready;
-        // A restarted worker re-describes the file it was showing.
-        let path = self.file.as_ref().map(|f| f.path.clone()).or_else(|| self.startup.file.clone());
-        if let Some(p) = path {
-            if self.file.is_some() {
-                self.results.clear();
-            }
+        // A restarted worker serves the file already open as it is: the
+        // results and refusals stand (a computation the user cancelled is
+        // not run again). A file asked for meanwhile (the command line, Load
+        // while the worker started, an open the old worker never answered)
+        // is opened now.
+        if let Some(p) = self.startup.file.take()
+            && self.file.as_ref().is_none_or(|f| f.path != p)
+        {
             self.open_file(p);
         }
     }
@@ -537,20 +607,32 @@ impl GuiApp {
         let sets = self.startup.sets.clone();
         for (dest, text) in sets {
             let view = self.startup.view.unwrap_or(View::Heatmap);
-            let Some(opts) = self.options.get_mut(&view) else { continue };
+            let Some(opts) = self.options.get_mut(&view) else {
+                continue;
+            };
             let Some(kind) = opts.schema.option(&dest).map(|o| o.kind) else {
-                self.notify(Level::Warning, format!("--set: the {} view has no option '{dest}'", view.cli_name()));
+                self.notify(
+                    Level::Warning,
+                    format!("--set: the {} view has no option '{dest}'", view.cli_name()),
+                );
                 continue;
             };
             let value = match kind {
-                protocol::OptionKind::Flag => json!(matches!(text.as_str(), "1" | "true" | "yes" | "on")),
-                protocol::OptionKind::Int | protocol::OptionKind::Float => match text.parse::<f64>() {
-                    Ok(x) => params::number(kind, x),
-                    Err(_) => {
-                        self.notify(Level::Warning, format!("--set {dest}: '{text}' is not a number"));
-                        continue;
+                protocol::OptionKind::Flag => {
+                    json!(matches!(text.as_str(), "1" | "true" | "yes" | "on"))
+                }
+                protocol::OptionKind::Int | protocol::OptionKind::Float => {
+                    match text.parse::<f64>() {
+                        Ok(x) => params::number(kind, x),
+                        Err(_) => {
+                            self.notify(
+                                Level::Warning,
+                                format!("--set {dest}: '{text}' is not a number"),
+                            );
+                            continue;
+                        }
                     }
-                },
+                }
                 _ => json!(text),
             };
             opts.set(&dest, value);
@@ -564,7 +646,9 @@ impl GuiApp {
         if path.is_empty() {
             return;
         }
-        let path = std::path::absolute(&path).map(|p| p.display().to_string()).unwrap_or(path);
+        let path = std::path::absolute(&path)
+            .map(|p| p.display().to_string())
+            .unwrap_or(path);
         self.path_input = path.clone();
         if !self.worker_ready() {
             self.startup.file = Some(path);
@@ -612,19 +696,26 @@ impl GuiApp {
         // The trace needs a position (the CLI requires one): the middle of the
         // fibre, the index the CLI's own fallback takes, unless one is set
         // that lies on this fibre.
-        let on_fibre = |p: &Value| p.as_f64().is_some_and(|m| (0.0..desc.summary.length_m).contains(&m));
+        let on_fibre = |p: &Value| {
+            p.as_f64()
+                .is_some_and(|m| (0.0..desc.summary.length_m).contains(&m))
+        };
         if let Some(trace) = self.options.get_mut(&View::Trace)
             && !on_fibre(trace.get("position"))
         {
             let mid = (desc.summary.positions / 2) as f64 * desc.summary.step_m;
             trace.set("position", json!(mid));
         }
-        let info_key = self.render_spec_for(View::Info, Some(&desc.path), None, "rad").map(|s| s.key);
+        let info_key = self
+            .render_spec_for(View::Info, Some(&desc.path), None, "rad")
+            .map(|s| s.key);
         if let Some(key) = info_key {
-            self.results.insert(View::Info, (key, ViewResult::Info(desc.info_text.clone())));
+            self.results
+                .insert(View::Info, (key, ViewResult::Info(desc.info_text.clone())));
         }
         self.file = Some(desc);
-        self.force_render = true;
+        // The info text came with the description.
+        self.force_render = self.view != View::Info;
     }
 
     pub fn pick_file(&mut self) {
@@ -633,11 +724,18 @@ impl GuiApp {
         }
         let (tx, rx) = mpsc::channel();
         let waker = self.waker.clone();
-        let start_dir = self.file.as_ref().and_then(|f| std::path::Path::new(&f.path).parent().map(|p| p.to_path_buf()));
+        let start_dir = self.file.as_ref().and_then(|f| {
+            std::path::Path::new(&f.path)
+                .parent()
+                .map(|p| p.to_path_buf())
+        });
         std::thread::spawn(move || {
             let mut dialog = rfd::FileDialog::new()
                 .set_title("Open a recording")
-                .add_filter("Audace recordings", &["dat", "h5", "hdf5", "tdms", "sgy", "segy"])
+                .add_filter(
+                    "Audace recordings",
+                    &["dat", "h5", "hdf5", "tdms", "sgy", "segy"],
+                )
                 .add_filter("All files", &["*"]);
             if let Some(dir) = start_dir {
                 dialog = dialog.set_directory(dir);
@@ -660,7 +758,10 @@ impl GuiApp {
             Err(mpsc::TryRecvError::Empty) => {}
             Err(mpsc::TryRecvError::Disconnected) => {
                 self.dialog = None;
-                self.notify(Level::Warning, "The file dialog could not be shown; type the path instead.");
+                self.notify(
+                    Level::Warning,
+                    "The file dialog could not be shown; type the path instead.",
+                );
             }
         }
     }
@@ -671,7 +772,13 @@ impl GuiApp {
 
     // --- Rendering -------------------------------------------------------------
 
-    fn render_spec_for(&self, view: View, path: Option<&str>, channel: Option<&str>, unit: &str) -> Option<RenderSpec> {
+    fn render_spec_for(
+        &self,
+        view: View,
+        path: Option<&str>,
+        channel: Option<&str>,
+        unit: &str,
+    ) -> Option<RenderSpec> {
         let path = path?;
         let opts = self.options.get(&view)?;
         // `info` takes no --channel: it always describes the default one.
@@ -681,8 +788,15 @@ impl GuiApp {
         fields.insert("path".into(), json!(path));
         fields.insert("channel".into(), channel.map_or(Value::Null, |c| json!(c)));
         fields.insert("unit".into(), json!(unit));
-        let zoom = if view.zoom_requests_data() { self.zoom.get(&view) } else { None };
-        fields.insert("options".into(), Value::Object(opts.request_options(view, zoom)));
+        let zoom = if view.zoom_requests_data() {
+            self.zoom.get(&view)
+        } else {
+            None
+        };
+        fields.insert(
+            "options".into(),
+            Value::Object(opts.request_options(view, zoom)),
+        );
         let key = serde_json::to_string(&fields).expect("request serialises");
         Some(RenderSpec { view, key, fields })
     }
@@ -694,15 +808,22 @@ impl GuiApp {
     }
 
     fn inflight_key(&self) -> Option<&str> {
-        self.current_render.and_then(|id| match self.inflight.get(&id) {
-            Some(Inflight::Render { key, superseded: false, .. }) => Some(key.as_str()),
-            _ => None,
-        })
+        self.current_render
+            .and_then(|id| match self.inflight.get(&id) {
+                Some(Inflight::Render {
+                    key,
+                    superseded: false,
+                    ..
+                }) => Some(key.as_str()),
+                _ => None,
+            })
     }
 
     /// Whether the shown result is stale (the options changed since).
     pub fn is_stale(&self) -> bool {
-        let Some(spec) = self.render_spec() else { return false };
+        let Some(spec) = self.render_spec() else {
+            return false;
+        };
         let shown = self.results.get(&self.view).map(|(k, _)| k.as_str());
         let failed = self.errors.get(&self.view).map(|(k, _)| k.as_str());
         shown != Some(spec.key.as_str()) && failed != Some(spec.key.as_str())
@@ -722,14 +843,25 @@ impl GuiApp {
         if !self.worker_ready() || self.opening.is_some() {
             return;
         }
-        let Some(spec) = self.render_spec() else { return };
+        let Some(spec) = self.render_spec() else {
+            return;
+        };
         if self.inflight_key() == Some(spec.key.as_str()) {
             self.pending = None;
             return;
         }
-        let shown = self.results.get(&self.view).map(|(k, _)| k == &spec.key).unwrap_or(false);
-        let failed = self.errors.get(&self.view).map(|(k, _)| k == &spec.key).unwrap_or(false);
-        if shown || (failed && !self.force_render) {
+        let shown = self
+            .results
+            .get(&self.view)
+            .map(|(k, _)| k == &spec.key)
+            .unwrap_or(false);
+        let failed = self
+            .errors
+            .get(&self.view)
+            .map(|(k, _)| k == &spec.key)
+            .unwrap_or(false);
+        // Render (force) recomputes even what is shown.
+        if !self.force_render && (shown || failed) {
             self.pending = None;
             self.force_render = false;
             return;
@@ -746,7 +878,8 @@ impl GuiApp {
                 }
                 _ => {
                     // A view never shown renders at once; an edit waits for quiet.
-                    if self.results.contains_key(&self.view) || self.errors.contains_key(&self.view) {
+                    if self.results.contains_key(&self.view) || self.errors.contains_key(&self.view)
+                    {
                         self.pending = Some((spec.key.clone(), now));
                         return;
                     }
@@ -765,7 +898,12 @@ impl GuiApp {
 
     fn send_render(&mut self, spec: RenderSpec) {
         self.supersede_current();
-        let what = Inflight::Render { view: spec.view, key: spec.key.clone(), superseded: false, cancelled_at: None };
+        let what = Inflight::Render {
+            view: spec.view,
+            key: spec.key.clone(),
+            superseded: false,
+            cancelled_at: None,
+        };
         if spec.view == View::Scope {
             self.scope = None;
         }
@@ -776,9 +914,16 @@ impl GuiApp {
     }
 
     fn supersede_current(&mut self) {
-        let Some(id) = self.current_render.take() else { return };
+        let Some(id) = self.current_render.take() else {
+            return;
+        };
         self.progress = None;
-        if let Some(Inflight::Render { superseded, cancelled_at, .. }) = self.inflight.get_mut(&id) {
+        if let Some(Inflight::Render {
+            superseded,
+            cancelled_at,
+            ..
+        }) = self.inflight.get_mut(&id)
+        {
             *superseded = true;
             *cancelled_at = Some(Instant::now());
         }
@@ -790,13 +935,24 @@ impl GuiApp {
     /// The Cancel button.
     pub fn cancel(&mut self) {
         if let Some(id) = self.current_render
-            && let Some(Inflight::Render { cancelled_at, view, key, .. }) = self.inflight.get_mut(&id)
+            && let Some(Inflight::Render {
+                cancelled_at,
+                view,
+                key,
+                ..
+            }) = self.inflight.get_mut(&id)
         {
             *cancelled_at = Some(Instant::now());
             // Not asked again until the options change or Render is pressed.
             self.errors.insert(
                 *view,
-                (key.clone(), WorkerError { kind: "cancelled".into(), message: "Cancelled.".into() }),
+                (
+                    key.clone(),
+                    WorkerError {
+                        kind: "cancelled".into(),
+                        message: "Cancelled.".into(),
+                    },
+                ),
             );
             if let Some(w) = self.worker.as_mut() {
                 let _ = w.cancel(id);
@@ -807,10 +963,25 @@ impl GuiApp {
     pub fn cancelling(&self) -> bool {
         self.current_render
             .and_then(|id| self.inflight.get(&id))
-            .is_some_and(|w| matches!(w, Inflight::Render { cancelled_at: Some(_), .. }))
+            .is_some_and(|w| {
+                matches!(
+                    w,
+                    Inflight::Render {
+                        cancelled_at: Some(_),
+                        ..
+                    }
+                )
+            })
     }
 
-    fn on_result(&mut self, view: View, key: String, result: ViewResult, warnings: Vec<String>, now: Instant) {
+    fn on_result(
+        &mut self,
+        view: View,
+        key: String,
+        result: ViewResult,
+        warnings: Vec<String>,
+        now: Instant,
+    ) {
         self.result_serial += 1;
         self.errors.remove(&view);
         self.warnings = warnings;
@@ -839,13 +1010,18 @@ impl GuiApp {
             }
             return;
         }
-        let Some(player) = self.scope.as_ref() else { return };
+        let Some(player) = self.scope.as_ref() else {
+            return;
+        };
         if player.in_flight {
             return;
         }
         let local = if player.playing {
             let period = Duration::from_secs_f64(1.0 / player.fps.clamp(1.0, 240.0));
-            if player.last_request.is_some_and(|t| now.duration_since(t) < period) {
+            if player
+                .last_request
+                .is_some_and(|t| now.duration_since(t) < period)
+            {
                 return;
             }
             player.local_now(now)
@@ -859,7 +1035,9 @@ impl GuiApp {
         let mut fields = Map::new();
         fields.insert("session".into(), json!(session));
         fields.insert("local".into(), json!(local));
-        if self.request("scope_frame", fields, Inflight::Frame).is_some()
+        if self
+            .request("scope_frame", fields, Inflight::Frame)
+            .is_some()
             && let Some(p) = self.scope.as_mut()
         {
             p.in_flight = true;
@@ -876,8 +1054,12 @@ impl GuiApp {
             || self.startup.screenshot.is_some()
     }
 
-    /// For `--screenshot`: the requested view is drawn and nothing is pending.
+    /// For `--screenshot`: the requested view is drawn and nothing is
+    /// pending, or the worker could not run (its error is what is shown).
     pub fn screenshot_ready(&self) -> bool {
+        if matches!(self.worker_state, WorkerState::Failed(_)) {
+            return true;
+        }
         self.file.is_some()
             && !self.busy()
             && !self.render_pending()
@@ -911,16 +1093,39 @@ mod tests {
 
     #[test]
     fn parses_the_command_line() {
-        let a = parse(&["/data/x.h5", "--view", "fft", "--set", "db=true", "--set", "window = blackman"]).unwrap();
+        let a = parse(&[
+            "/data/x.h5",
+            "--view",
+            "fft",
+            "--set",
+            "db=true",
+            "--set",
+            "window = blackman",
+        ])
+        .unwrap();
         assert_eq!(a.file.as_deref(), Some("/data/x.h5"));
         assert_eq!(a.view, Some(View::Fft));
-        assert_eq!(a.sets, vec![("db".into(), "true".into()), ("window".into(), "blackman".into())]);
+        assert_eq!(
+            a.sets,
+            vec![
+                ("db".into(), "true".into()),
+                ("window".into(), "blackman".into())
+            ]
+        );
         assert!(parse(&["--view", "demod"]).is_err());
         assert!(parse(&["--set", "nokey"]).is_err());
         assert!(parse(&["a.dat", "b.dat"]).is_err());
         assert!(parse(&["--bogus"]).is_err());
         let z = parse(&["--zoom", "1:2.5:100:300", "--unit", "strain_rate"]).unwrap();
-        assert_eq!(z.zoom, Some(Window { t0: 1.0, t1: 2.5, d0: Some(100.0), d1: Some(300.0) }));
+        assert_eq!(
+            z.zoom,
+            Some(Window {
+                t0: 1.0,
+                t1: 2.5,
+                d0: Some(100.0),
+                d1: Some(300.0)
+            })
+        );
         assert_eq!(z.unit.as_deref(), Some("strain_rate"));
         assert!(parse(&["--zoom", "2:1"]).is_err());
         assert!(parse(&["--zoom", "1:2:3"]).is_err());
@@ -932,16 +1137,36 @@ mod tests {
             "d_step": 1.0, "length_m": 10.0, "y_label": "y", "title": "t", "ylim": [0.0, 1.0],
             "max_points": 4000, "line_offset": 0, "frame": {"session": 1, "local": 0, "line": 0, "t": 0.0}}))
         .unwrap();
-        let frame = || ScopeFrame { local: 0, line: 0, t: 0.0, x: vec![], y: vec![] };
+        let frame = || ScopeFrame {
+            local: 0,
+            line: 0,
+            t: 0.0,
+            x: vec![],
+            y: vec![],
+        };
         let now = Instant::now();
-        (ScopePlayer::new(ScopeResult { meta, first: frame() }, frame(), now), now)
+        (
+            ScopePlayer::new(
+                ScopeResult {
+                    meta,
+                    first: frame(),
+                },
+                frame(),
+                now,
+            ),
+            now,
+        )
     }
 
     #[test]
     fn the_scope_clock_is_the_pulse_rate_times_speed_looping() {
         let (mut p, t0) = player(500, 1000.0);
         assert_eq!(p.local_now(t0 + Duration::from_millis(100)), 100);
-        assert_eq!(p.local_now(t0 + Duration::from_millis(600)), 100, "loops over the window");
+        assert_eq!(
+            p.local_now(t0 + Duration::from_millis(600)),
+            100,
+            "loops over the window"
+        );
         p.set_speed(0.5, t0 + Duration::from_millis(100));
         assert_eq!(p.local_now(t0 + Duration::from_millis(300)), 200);
     }
@@ -952,6 +1177,9 @@ mod tests {
         p.set_playing(false, t0 + Duration::from_millis(250));
         assert_eq!(p.paused_local, 250);
         p.set_playing(true, t0 + Duration::from_secs(10));
-        assert_eq!(p.local_now(t0 + Duration::from_secs(10) + Duration::from_millis(5)), 255);
+        assert_eq!(
+            p.local_now(t0 + Duration::from_secs(10) + Duration::from_millis(5)),
+            255
+        );
     }
 }

@@ -37,7 +37,9 @@ impl fmt::Display for ProtocolError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ProtocolError::Io(e) => write!(f, "reading the worker: {e}"),
-            ProtocolError::Truncated(what) => write!(f, "the worker's output stopped inside {what}"),
+            ProtocolError::Truncated(what) => {
+                write!(f, "the worker's output stopped inside {what}")
+            }
             ProtocolError::BadHeader(why) => write!(f, "unreadable message from the worker: {why}"),
             ProtocolError::BadArray(why) => write!(f, "bad array from the worker: {why}"),
         }
@@ -139,7 +141,10 @@ impl Message {
 
     /// The message `type`.
     pub fn kind(&self) -> &str {
-        self.header.get("type").and_then(Value::as_str).unwrap_or("")
+        self.header
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or("")
     }
 
     /// Takes the array `name` out of the message.
@@ -148,13 +153,19 @@ impl Message {
             .arrays
             .iter()
             .position(|a| a.name == name)
-            .ok_or_else(|| ProtocolError::BadArray(format!("the {} message has no array '{name}'", self.kind())))?;
+            .ok_or_else(|| {
+                ProtocolError::BadArray(format!(
+                    "the {} message has no array '{name}'",
+                    self.kind()
+                ))
+            })?;
         Ok(self.arrays.remove(pos))
     }
 
     /// The header as a typed message.
     pub fn parse<T: for<'de> Deserialize<'de>>(&self) -> Result<T, ProtocolError> {
-        T::deserialize(&self.header).map_err(|e| ProtocolError::BadHeader(format!("{} message: {e}", self.kind())))
+        T::deserialize(&self.header)
+            .map_err(|e| ProtocolError::BadHeader(format!("{} message: {e}", self.kind())))
     }
 }
 
@@ -179,13 +190,18 @@ fn decode(dtype: Dtype, bytes: &[u8]) -> ArrayData {
 /// Reads one message; `Ok(None)` at a clean end of stream (between messages).
 pub fn read_message<R: BufRead>(reader: &mut R) -> Result<Option<Message>, ProtocolError> {
     let mut line = Vec::new();
-    let n = reader.by_ref().take(MAX_LINE_BYTES as u64 + 1).read_until(b'\n', &mut line)?;
+    let n = reader
+        .by_ref()
+        .take(MAX_LINE_BYTES as u64 + 1)
+        .read_until(b'\n', &mut line)?;
     if n == 0 {
         return Ok(None);
     }
     if line.last() != Some(&b'\n') {
         if line.len() > MAX_LINE_BYTES {
-            return Err(ProtocolError::BadHeader(format!("a header line is longer than {MAX_LINE_BYTES} bytes")));
+            return Err(ProtocolError::BadHeader(format!(
+                "a header line is longer than {MAX_LINE_BYTES} bytes"
+            )));
         }
         return Err(ProtocolError::Truncated("a header line".into()));
     }
@@ -195,21 +211,31 @@ pub fn read_message<R: BufRead>(reader: &mut R) -> Result<Option<Message>, Proto
         ProtocolError::BadHeader(format!("{e} in {shown:?}"))
     })?;
     if !header.is_object() {
-        return Err(ProtocolError::BadHeader("a message must be a JSON object".into()));
+        return Err(ProtocolError::BadHeader(
+            "a message must be a JSON object".into(),
+        ));
     }
     let descs: Vec<ArrayDesc> = match header.get("arrays") {
         None | Some(Value::Null) => Vec::new(),
-        Some(v) => Vec::<ArrayDesc>::deserialize(v).map_err(|e| ProtocolError::BadArray(e.to_string()))?,
+        Some(v) => {
+            Vec::<ArrayDesc>::deserialize(v).map_err(|e| ProtocolError::BadArray(e.to_string()))?
+        }
     };
     let mut arrays = Vec::with_capacity(descs.len());
     for d in descs {
-        let dtype = Dtype::parse(&d.dtype)
-            .ok_or_else(|| ProtocolError::BadArray(format!("'{}' has the unknown dtype '{}'", d.name, d.dtype)))?;
+        let dtype = Dtype::parse(&d.dtype).ok_or_else(|| {
+            ProtocolError::BadArray(format!("'{}' has the unknown dtype '{}'", d.name, d.dtype))
+        })?;
         let count = d
             .shape
             .iter()
             .try_fold(1usize, |acc, &n| acc.checked_mul(n))
-            .ok_or_else(|| ProtocolError::BadArray(format!("'{}' has an impossible shape {:?}", d.name, d.shape)))?;
+            .ok_or_else(|| {
+                ProtocolError::BadArray(format!(
+                    "'{}' has an impossible shape {:?}",
+                    d.name, d.shape
+                ))
+            })?;
         let expected = count.checked_mul(dtype.item_size());
         if expected != Some(d.nbytes) {
             return Err(ProtocolError::BadArray(format!(
@@ -218,14 +244,23 @@ pub fn read_message<R: BufRead>(reader: &mut R) -> Result<Option<Message>, Proto
             )));
         }
         if d.nbytes > MAX_ARRAY_BYTES {
-            return Err(ProtocolError::BadArray(format!("'{}' is larger than {MAX_ARRAY_BYTES} bytes", d.name)));
+            return Err(ProtocolError::BadArray(format!(
+                "'{}' is larger than {MAX_ARRAY_BYTES} bytes",
+                d.name
+            )));
         }
         let mut bytes = vec![0u8; d.nbytes];
         reader.read_exact(&mut bytes).map_err(|e| match e.kind() {
-            std::io::ErrorKind::UnexpectedEof => ProtocolError::Truncated(format!("the array '{}'", d.name)),
+            std::io::ErrorKind::UnexpectedEof => {
+                ProtocolError::Truncated(format!("the array '{}'", d.name))
+            }
             _ => ProtocolError::Io(e),
         })?;
-        arrays.push(Array { name: d.name, shape: d.shape, data: decode(dtype, &bytes) });
+        arrays.push(Array {
+            name: d.name,
+            shape: d.shape,
+            data: decode(dtype, &bytes),
+        });
     }
     Ok(Some(Message { header, arrays }))
 }
@@ -506,7 +541,10 @@ mod tests {
         let m = read_message(&mut r).unwrap().unwrap();
         assert_eq!((m.id(), m.kind()), (Some(3), "bye"));
         assert!(m.arrays.is_empty());
-        assert!(read_message(&mut r).unwrap().is_none(), "clean end of stream");
+        assert!(
+            read_message(&mut r).unwrap().is_none(),
+            "clean end of stream"
+        );
     }
 
     #[test]
@@ -529,7 +567,9 @@ mod tests {
         let mut m = read_message(&mut r).unwrap().unwrap();
         let d = m.take("data").unwrap();
         assert_eq!(d.shape, vec![2, 3]);
-        let ArrayData::F32(v) = &d.data else { panic!("f32 expected") };
+        let ArrayData::F32(v) = &d.data else {
+            panic!("f32 expected")
+        };
         assert_eq!(v[0], 1.5);
         assert!(v[2].is_nan());
         assert_eq!(m.take("axis").unwrap().data, ArrayData::F64(axis.to_vec()));
@@ -566,9 +606,15 @@ mod tests {
 
     #[test]
     fn a_line_that_is_not_json_is_reported() {
-        let err = read_message(&mut Cursor::new(b"Traceback (most recent call last):\n".to_vec())).unwrap_err();
+        let err = read_message(&mut Cursor::new(
+            b"Traceback (most recent call last):\n".to_vec(),
+        ))
+        .unwrap_err();
         assert!(matches!(err, ProtocolError::BadHeader(_)));
-        assert!(err.to_string().contains("Traceback"), "the line is quoted: {err}");
+        assert!(
+            err.to_string().contains("Traceback"),
+            "the line is quoted: {err}"
+        );
     }
 
     #[test]
@@ -606,7 +652,10 @@ mod tests {
         let s = ViewSchema::deserialize(&v).unwrap();
         assert_eq!(s.option("max_time_bins").unwrap().kind, OptionKind::Int);
         assert_eq!(s.option("max_time_bins").unwrap().default, json!(2000));
-        assert_eq!(s.option("reduce").unwrap().choices.as_ref().unwrap().len(), 2);
+        assert_eq!(
+            s.option("reduce").unwrap().choices.as_ref().unwrap().len(),
+            2
+        );
         assert_eq!(s.exclusive[0], vec!["position", "position_range"]);
     }
 }

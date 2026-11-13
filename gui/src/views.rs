@@ -6,8 +6,8 @@ use bevy_egui::egui::{self, Color32, ColorImage, TextureHandle, TextureOptions};
 use crate::colormap::{Colormap, Norm};
 use crate::params::View;
 use crate::protocol::{
-    Array, ArrayData, BandsMeta, ColormapMeta, FftMeta, HeatmapMeta, InfoMeta, InspectMeta, Message, ProtocolError,
-    ScopeMeta, TraceMeta,
+    Array, ArrayData, BandsMeta, ColormapMeta, FftMeta, HeatmapMeta, InfoMeta, InspectMeta,
+    Message, ProtocolError, ScopeMeta, TraceMeta,
 };
 
 /// Largest texture side used: an image above it is split into tiles (GPUs
@@ -53,13 +53,27 @@ impl Image2d {
     ) -> Result<Image2d, String> {
         let (rows, cols) = match data.shape[..] {
             [r, c] => (r, c),
-            _ => return Err(format!("{name}: a 2-D image was expected, got the shape {:?}", data.shape)),
+            _ => {
+                return Err(format!(
+                    "{name}: a 2-D image was expected, got the shape {:?}",
+                    data.shape
+                ));
+            }
         };
-        let values = data.data.into_f32().ok_or_else(|| format!("{name}: float32 values expected"))?;
+        let values = data
+            .data
+            .into_f32()
+            .ok_or_else(|| format!("{name}: float32 values expected"))?;
         let ArrayData::U8(lut_bytes) = lut.data else {
             return Err(format!("{name}: the colormap table must be bytes"));
         };
-        let cmap = Colormap::new(&colormap.cmap, &lut_bytes, colormap.under, colormap.over, colormap.bad)?;
+        let cmap = Colormap::new(
+            &colormap.cmap,
+            &lut_bytes,
+            colormap.under,
+            colormap.over,
+            colormap.bad,
+        )?;
         // Limits the CLI could not compute (an all-NaN field) draw on [0, 1].
         let vmin = limits.0.unwrap_or(0.0);
         let vmax = limits.1.unwrap_or(1.0);
@@ -93,8 +107,15 @@ impl Image2d {
                     pixels.extend(row.iter().map(|&v| self.cmap.color(v, &norm)));
                 }
                 let image = ColorImage::new([c1 - c0, r1 - r0], pixels);
-                let texture = ctx.load_texture(format!("{name}-{r0}-{c0}"), image, TextureOptions::NEAREST);
-                self.tiles.push(Tile { texture, r0, r1, c0, c1 });
+                let texture =
+                    ctx.load_texture(format!("{name}-{r0}-{c0}"), image, TextureOptions::NEAREST);
+                self.tiles.push(Tile {
+                    texture,
+                    r0,
+                    r1,
+                    c0,
+                    c1,
+                });
             }
         }
     }
@@ -105,7 +126,12 @@ impl Image2d {
         let [t0, t1] = self.t_extent;
         let dc = (d1 - d0) / self.cols.max(1) as f64;
         let tr = (t1 - t0) / self.rows.max(1) as f64;
-        (d0 + tile.c0 as f64 * dc, d0 + tile.c1 as f64 * dc, t0 + tile.r0 as f64 * tr, t0 + tile.r1 as f64 * tr)
+        (
+            d0 + tile.c0 as f64 * dc,
+            d0 + tile.c1 as f64 * dc,
+            t0 + tile.r0 as f64 * tr,
+            t0 + tile.r1 as f64 * tr,
+        )
     }
 
     /// The cell under `(distance, time)`, as `(row, column, value)`.
@@ -188,15 +214,33 @@ fn take_f64(msg: &mut Message, name: &str) -> Result<Vec<f64>, String> {
 }
 
 /// A scope frame message (`scope` or `scope_frame`).
-pub fn decode_frame(msg: &mut Message, local: u64, line: u64, t: f64) -> Result<ScopeFrame, String> {
-    Ok(ScopeFrame { local, line, t, x: take_f64(msg, "x")?, y: take_f64(msg, "y")? })
+pub fn decode_frame(
+    msg: &mut Message,
+    local: u64,
+    line: u64,
+    t: f64,
+) -> Result<ScopeFrame, String> {
+    Ok(ScopeFrame {
+        local,
+        line,
+        t,
+        x: take_f64(msg, "x")?,
+        y: take_f64(msg, "y")?,
+    })
 }
 
 /// Decodes the result of a render; returns it with the warnings it carried.
-pub fn decode(view: View, mut msg: Message, ctx: &egui::Context) -> Result<(ViewResult, Vec<String>), String> {
+pub fn decode(
+    view: View,
+    mut msg: Message,
+    ctx: &egui::Context,
+) -> Result<(ViewResult, Vec<String>), String> {
     let kind = msg.kind().to_string();
     if kind != view.cli_name() {
-        return Err(format!("the worker answered a {} request with '{kind}'", view.cli_name()));
+        return Err(format!(
+            "the worker answered a {} request with '{kind}'",
+            view.cli_name()
+        ));
     }
     Ok(match view {
         View::Info => {
@@ -238,14 +282,24 @@ pub fn decode(view: View, mut msg: Message, ctx: &egui::Context) -> Result<(View
                     &p.colormap,
                 )?);
             }
-            (ViewResult::Bands { title: m.title, panels }, m.warnings)
+            (
+                ViewResult::Bands {
+                    title: m.title,
+                    panels,
+                },
+                m.warnings,
+            )
         }
         View::Fft => {
             let m: FftMeta = msg.parse().map_err(err)?;
             let freqs = take_f64(&mut msg, "freqs")?;
             let mut curves = Vec::new();
             for (i, label) in m.curves.iter().enumerate() {
-                curves.push(Curve { label: label.clone(), x: freqs.clone(), y: take_f64(&mut msg, &format!("curve{i}"))? });
+                curves.push(Curve {
+                    label: label.clone(),
+                    x: freqs.clone(),
+                    y: take_f64(&mut msg, &format!("curve{i}"))?,
+                });
             }
             let warnings = m.warnings.clone();
             (ViewResult::Fft(FftResult { meta: m, curves }), warnings)
@@ -300,7 +354,10 @@ pub fn envelope(x: &[f64], y: &[f64], x_range: (f64, f64), bins: usize) -> Vec<[
     }
     let count = hi - lo;
     if count <= 2 * bins.max(1) {
-        return (lo..hi).filter(|&i| y[i].is_finite()).map(|i| [x[i], y[i]]).collect();
+        return (lo..hi)
+            .filter(|&i| y[i].is_finite())
+            .map(|i| [x[i], y[i]])
+            .collect();
     }
     let bins = bins.max(1);
     let mut out = Vec::with_capacity(2 * bins);
@@ -310,7 +367,9 @@ pub fn envelope(x: &[f64], y: &[f64], x_range: (f64, f64), bins: usize) -> Vec<[
         if e <= s {
             continue;
         }
-        let Some(first) = (s..e).find(|&i| y[i].is_finite()) else { continue };
+        let Some(first) = (s..e).find(|&i| y[i].is_finite()) else {
+            continue;
+        };
         let (mut imin, mut imax) = (first, first);
         for i in first..e {
             if !y[i].is_finite() {
@@ -323,7 +382,11 @@ pub fn envelope(x: &[f64], y: &[f64], x_range: (f64, f64), bins: usize) -> Vec<[
                 imax = i;
             }
         }
-        let (a, b2) = if imin <= imax { (imin, imax) } else { (imax, imin) };
+        let (a, b2) = if imin <= imax {
+            (imin, imax)
+        } else {
+            (imax, imin)
+        };
         out.push([x[a], y[a]]);
         if b2 != a {
             out.push([x[b2], y[b2]]);
@@ -355,14 +418,20 @@ mod tests {
         let e = envelope(&x, &y, (0.0, n as f64), 500);
         assert!(e.len() <= 1000);
         assert!(e.contains(&[123_457.0, 5.0]) && e.contains(&[876_543.0, -7.0]));
-        assert!(e.windows(2).all(|w| w[0][0] <= w[1][0]), "points stay in x order");
+        assert!(
+            e.windows(2).all(|w| w[0][0] <= w[1][0]),
+            "points stay in x order"
+        );
     }
 
     #[test]
     fn envelope_leaves_missing_samples_out() {
         let x = [0.0, 1.0, 2.0, 3.0];
         let y = [f64::NAN, 1.0, f64::INFINITY, 3.0];
-        assert_eq!(envelope(&x, &y, (0.0, 3.0), 100), vec![[1.0, 1.0], [3.0, 3.0]]);
+        assert_eq!(
+            envelope(&x, &y, (0.0, 3.0), 100),
+            vec![[1.0, 1.0], [3.0, 3.0]]
+        );
         let x: Vec<f64> = (0..1000).map(f64::from).collect();
         let mut y = vec![f64::NAN; 1000];
         y[500] = 2.0;

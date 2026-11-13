@@ -72,7 +72,12 @@ fn main() {
 
 fn setup(mut commands: Commands, boot: Res<Boot>, proxy: Option<Res<EventLoopProxyWrapper>>) {
     commands.spawn(Camera2d);
-    let (settings, warning, startup) = boot.0.lock().expect("boot lock").take().expect("setup runs once");
+    let (settings, warning, startup) = boot
+        .0
+        .lock()
+        .expect("boot lock")
+        .take()
+        .expect("setup runs once");
     // The worker's reader threads wake the event loop when a message arrives.
     let waker = match proxy {
         Some(p) => {
@@ -110,7 +115,9 @@ fn screenshot_system(
     mut stage: Local<Option<(u32, std::path::PathBuf)>>,
 ) {
     let Some(mut gui) = gui else { return };
-    let Some(path) = gui.startup.screenshot.clone() else { return };
+    let Some(path) = gui.startup.screenshot.clone() else {
+        return;
+    };
     match stage.as_mut() {
         None => {
             if gui.screenshot_ready() {
@@ -121,7 +128,9 @@ fn screenshot_system(
             // A few frames for the layout and the textures to settle.
             if gui.ready_frames >= 10 {
                 info!("saving the window to {}", path.display());
-                commands.spawn(Screenshot::primary_window()).observe(save_to_disk(path.clone()));
+                commands
+                    .spawn(Screenshot::primary_window())
+                    .observe(save_to_disk(path.clone()));
                 *stage = Some((0, path));
             }
         }

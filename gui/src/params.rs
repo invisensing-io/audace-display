@@ -21,7 +21,15 @@ pub enum View {
 }
 
 impl View {
-    pub const ALL: [View; 7] = [View::Info, View::Heatmap, View::Bands, View::Fft, View::Trace, View::Scope, View::Inspect];
+    pub const ALL: [View; 7] = [
+        View::Info,
+        View::Heatmap,
+        View::Bands,
+        View::Fft,
+        View::Trace,
+        View::Scope,
+        View::Inspect,
+    ];
 
     /// The CLI subcommand.
     pub fn cli_name(self) -> &'static str {
@@ -74,7 +82,13 @@ impl View {
 /// An option of the CLI that no group names lands in "Other options", so an
 /// option the CLI gains is still offered.
 pub fn layout(view: View) -> &'static [(&'static str, &'static [&'static str])] {
-    const WINDOW: &[&str] = &["start_time", "duration", "start_distance", "end_distance", "max_pulses"];
+    const WINDOW: &[&str] = &[
+        "start_time",
+        "duration",
+        "start_distance",
+        "end_distance",
+        "max_pulses",
+    ];
     match view {
         View::Info => &[],
         View::Heatmap => &[
@@ -83,7 +97,10 @@ pub fn layout(view: View) -> &'static [(&'static str, &'static [&'static str])] 
             ("Colour", &["variance", "db", "vmin", "vmax", "cmap"]),
         ],
         View::Bands => &[
-            ("Bands (Hz)", &["f0", "f1", "f2", "f3", "no_detrend", "variance"]),
+            (
+                "Bands (Hz)",
+                &["f0", "f1", "f2", "f3", "no_detrend", "variance"],
+            ),
             ("Time and distance window", WINDOW),
             ("Resolution", &["max_time_bins", "max_space_bins"]),
             ("Colour", &["cmap"]),
@@ -91,18 +108,33 @@ pub fn layout(view: View) -> &'static [(&'static str, &'static [&'static str])] 
         View::Fft => &[
             ("Positions", &["position", "position_range"]),
             ("Spectrum", &["window", "no_detrend", "fmax", "db"]),
-            ("Time window", &["start_time", "duration", "subsample_time", "max_pulses"]),
+            (
+                "Time window",
+                &["start_time", "duration", "subsample_time", "max_pulses"],
+            ),
         ],
         View::Trace => &[
             ("Position", &["position"]),
-            ("Time window", &["start_time", "duration", "subsample_time", "max_pulses"]),
+            (
+                "Time window",
+                &["start_time", "duration", "subsample_time", "max_pulses"],
+            ),
             ("Display", &["max_points"]),
         ],
-        View::Scope => &[("Loop", &["start_time", "duration"]), ("Display", &["max_points"])],
+        View::Scope => &[
+            ("Loop", &["start_time", "duration"]),
+            ("Display", &["max_points"]),
+        ],
         View::Inspect => &[
             ("Location", &["index", "position"]),
-            ("Time window", &["start_time", "duration", "subsample_time", "max_pulses"]),
-            ("Waveform and spectrum", &["no_detrend", "clip_percentile", "window", "fmax", "fft_log"]),
+            (
+                "Time window",
+                &["start_time", "duration", "subsample_time", "max_pulses"],
+            ),
+            (
+                "Waveform and spectrum",
+                &["no_detrend", "clip_percentile", "window", "fmax", "fft_log"],
+            ),
         ],
     }
 }
@@ -143,13 +175,21 @@ pub struct ViewOptions {
 impl ViewOptions {
     /// Every option at the CLI's default.
     pub fn new(schema: ViewSchema) -> ViewOptions {
-        let mut o = ViewOptions { schema, values: BTreeMap::new() };
+        let mut o = ViewOptions {
+            schema,
+            values: BTreeMap::new(),
+        };
         o.reset();
         o
     }
 
     pub fn reset(&mut self) {
-        self.values = self.schema.options.iter().map(|o| (o.dest.clone(), o.default.clone())).collect();
+        self.values = self
+            .schema
+            .options
+            .iter()
+            .map(|o| (o.dest.clone(), o.default.clone()))
+            .collect();
     }
 
     pub fn get(&self, dest: &str) -> &Value {
@@ -167,7 +207,9 @@ impl ViewOptions {
     }
 
     pub fn is_default(&self, dest: &str) -> bool {
-        self.schema.option(dest).is_none_or(|o| &o.default == self.get(dest))
+        self.schema
+            .option(dest)
+            .is_none_or(|o| &o.default == self.get(dest))
     }
 
     /// The options in the panel's groups, then the ones no group names.
@@ -175,7 +217,8 @@ impl ViewOptions {
         let mut out = Vec::new();
         let mut placed = std::collections::BTreeSet::new();
         for (title, dests) in layout(view) {
-            let opts: Vec<&OptionSchema> = dests.iter().filter_map(|d| self.schema.option(d)).collect();
+            let opts: Vec<&OptionSchema> =
+                dests.iter().filter_map(|d| self.schema.option(d)).collect();
             placed.extend(dests.iter().copied());
             if !opts.is_empty() {
                 out.push((*title, opts));
@@ -185,7 +228,11 @@ impl ViewOptions {
             .schema
             .options
             .iter()
-            .filter(|o| !placed.contains(o.dest.as_str()) && !handled_elsewhere(view, &o.dest) && !ignored(view, &o.dest))
+            .filter(|o| {
+                !placed.contains(o.dest.as_str())
+                    && !handled_elsewhere(view, &o.dest)
+                    && !ignored(view, &o.dest)
+            })
             .collect();
         if !other.is_empty() {
             out.push(("Other options", other));
@@ -245,7 +292,9 @@ impl ViewOptions {
 pub fn options_from_schema(views: &BTreeMap<String, ViewSchema>) -> BTreeMap<View, ViewOptions> {
     views
         .iter()
-        .filter_map(|(name, schema)| View::from_cli(name).map(|v| (v, ViewOptions::new(schema.clone()))))
+        .filter_map(|(name, schema)| {
+            View::from_cli(name).map(|v| (v, ViewOptions::new(schema.clone())))
+        })
         .collect()
 }
 
@@ -314,8 +363,15 @@ mod tests {
         assert_eq!(r.get("db"), Some(&json!(true)));
         assert_eq!(r.get("start_time"), Some(&json!(1.5)));
         assert_eq!(r.get("max_time_bins"), Some(&json!(2000)));
-        assert!(!r.contains_key("duration"), "null options take the CLI default");
-        assert!(!r.contains_key("channel") && !r.contains_key("nanostrain") && !r.contains_key("strain_rate"));
+        assert!(
+            !r.contains_key("duration"),
+            "null options take the CLI default"
+        );
+        assert!(
+            !r.contains_key("channel")
+                && !r.contains_key("nanostrain")
+                && !r.contains_key("strain_rate")
+        );
     }
 
     #[test]
@@ -323,9 +379,18 @@ mod tests {
         let mut o = heatmap();
         o.set("max_pulses", json!(1000));
         o.set("start_time", json!(9.0));
-        let z = Window { t0: -0.5, t1: 2.0, d0: Some(10.0), d1: Some(20.0) };
+        let z = Window {
+            t0: -0.5,
+            t1: 2.0,
+            d0: Some(10.0),
+            d1: Some(20.0),
+        };
         let r = o.request_options(View::Heatmap, Some(&z));
-        assert_eq!(r.get("start_time"), Some(&json!(0.0)), "clamped at the start of the file");
+        assert_eq!(
+            r.get("start_time"),
+            Some(&json!(0.0)),
+            "clamped at the start of the file"
+        );
         assert_eq!(r.get("duration"), Some(&json!(2.0)));
         assert_eq!(r.get("start_distance"), Some(&json!(10.0)));
         assert_eq!(r.get("end_distance"), Some(&json!(20.0)));
@@ -349,16 +414,30 @@ mod tests {
         let groups = o.grouped(View::Heatmap);
         let (title, opts) = groups.last().unwrap();
         assert_eq!(*title, "Other options");
-        assert_eq!(opts.iter().map(|o| o.dest.as_str()).collect::<Vec<_>>(), vec!["brand_new_option"]);
+        assert_eq!(
+            opts.iter().map(|o| o.dest.as_str()).collect::<Vec<_>>(),
+            vec!["brand_new_option"]
+        );
     }
 
     #[test]
     fn the_distance_window_is_not_offered_where_the_cli_ignores_it() {
         let o = heatmap();
-        let shown: Vec<String> =
-            o.grouped(View::Trace).into_iter().flat_map(|(_, v)| v.into_iter().map(|o| o.dest.clone())).collect();
+        let shown: Vec<String> = o
+            .grouped(View::Trace)
+            .into_iter()
+            .flat_map(|(_, v)| v.into_iter().map(|o| o.dest.clone()))
+            .collect();
         assert!(!shown.contains(&"start_distance".to_string()));
-        let r = o.request_options(View::Trace, Some(&Window { t0: 0.0, t1: 1.0, d0: None, d1: None }));
+        let r = o.request_options(
+            View::Trace,
+            Some(&Window {
+                t0: 0.0,
+                t1: 1.0,
+                d0: None,
+                d1: None,
+            }),
+        );
         assert!(!r.contains_key("start_distance"));
     }
 

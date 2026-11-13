@@ -4,8 +4,13 @@
 
 use std::f32::consts::FRAC_PI_2;
 
-use bevy_egui::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, Ui, Vec2, epaint::TextShape, vec2};
-use egui_plot::{FilledArea, HoverPosition, Legend, Line, Plot, PlotBounds, PlotImage, PlotPoint, PlotPoints, Text, VLine};
+use bevy_egui::egui::{
+    self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, Ui, Vec2, epaint::TextShape, vec2,
+};
+use egui_plot::{
+    FilledArea, HoverPosition, Legend, Line, Plot, PlotBounds, PlotImage, PlotPoint, PlotPoints,
+    Text, VLine,
+};
 
 use crate::app::PlotNav;
 use crate::views::{Image2d, envelope};
@@ -24,13 +29,19 @@ pub fn fmt_g(x: f64, sig: usize) -> String {
         let s = format!("{:.*e}", sig - 1, x);
         // 1.500e3 -> 1.5e3
         match s.split_once('e') {
-            Some((m, e)) if m.contains('.') => format!("{}e{e}", m.trim_end_matches('0').trim_end_matches('.')),
+            Some((m, e)) if m.contains('.') => {
+                format!("{}e{e}", m.trim_end_matches('0').trim_end_matches('.'))
+            }
             _ => s,
         }
     } else {
         let decimals = (sig as i32 - 1 - exp).max(0) as usize;
         let s = format!("{x:.decimals$}");
-        if s.contains('.') { s.trim_end_matches('0').trim_end_matches('.').to_string() } else { s }
+        if s.contains('.') {
+            s.trim_end_matches('0').trim_end_matches('.').to_string()
+        } else {
+            s
+        }
     }
 }
 
@@ -56,7 +67,13 @@ pub struct PlotOutcome {
 
 /// Follows a plot's bounds: after a fit they are the expected ones; a change
 /// the user made, once the pointer is released, is reported.
-fn track_bounds(ui: &Ui, nav: &mut PlotNav, bounds: [f64; 4], fitted: bool, x_only: bool) -> Option<[f64; 4]> {
+fn track_bounds(
+    ui: &Ui,
+    nav: &mut PlotNav,
+    bounds: [f64; 4],
+    fitted: bool,
+    x_only: bool,
+) -> Option<[f64; 4]> {
     if fitted {
         nav.expected = Some(bounds);
         return None;
@@ -68,7 +85,11 @@ fn track_bounds(ui: &Ui, nav: &mut PlotNav, bounds: [f64; 4], fitted: bool, x_on
             None
         }
         Some(e) => {
-            let (e2, b2) = if x_only { ([e[0], 0.0, e[2], 1.0], [bounds[0], 0.0, bounds[2], 1.0]) } else { (e, bounds) };
+            let (e2, b2) = if x_only {
+                ([e[0], 0.0, e[2], 1.0], [bounds[0], 0.0, bounds[2], 1.0])
+            } else {
+                (e, bounds)
+            };
             if !interacting && !close(e2, b2) {
                 nav.expected = Some(bounds);
                 Some(bounds)
@@ -80,7 +101,15 @@ fn track_bounds(ui: &Ui, nav: &mut PlotNav, bounds: [f64; 4], fitted: bool, x_on
 }
 
 /// A waterfall: the image in plot coordinates (distance, time downwards).
-pub fn heatmap(ui: &mut Ui, id: &str, img: &Image2d, nav: &mut PlotNav, fit: bool, link: Option<&str>, size: Vec2) -> PlotOutcome {
+pub fn heatmap(
+    ui: &mut Ui,
+    id: &str,
+    img: &Image2d,
+    nav: &mut PlotNav,
+    fit: bool,
+    link: Option<&str>,
+    size: Vec2,
+) -> PlotOutcome {
     let label = img.label.clone();
     let mut plot = Plot::new(id)
         .width(size.x)
@@ -92,13 +121,24 @@ pub fn heatmap(ui: &mut Ui, id: &str, img: &Image2d, nav: &mut PlotNav, fit: boo
         .show_grid(false)
         .label_formatter(move |hp: &HoverPosition<'_>| {
             let p = match hp {
-                HoverPosition::NearDataPoint { position, .. } | HoverPosition::Elsewhere { position } => position,
+                HoverPosition::NearDataPoint { position, .. }
+                | HoverPosition::Elsewhere { position } => position,
             };
-            let value = img.cell_at(p.x, p.y).map(|(_, _, v)| fmt_g(v as f64, 5)).unwrap_or_else(|| "-".into());
-            Some(format!("d = {} m\nt = {} s\n{} = {value}", fmt_g(p.x, 6), fmt_g(p.y, 6), label))
+            let value = img
+                .cell_at(p.x, p.y)
+                .map(|(_, _, v)| fmt_g(v as f64, 5))
+                .unwrap_or_else(|| "-".into());
+            Some(format!(
+                "d = {} m\nt = {} s\n{} = {value}",
+                fmt_g(p.x, 6),
+                fmt_g(p.y, 6),
+                label
+            ))
         });
     if let Some(group) = link {
-        plot = plot.link_axis(group.to_string(), [true, true]).link_cursor(group.to_string(), [true, true]);
+        plot = plot
+            .link_axis(group.to_string(), [true, true])
+            .link_cursor(group.to_string(), [true, true]);
     }
     let [d0, d1] = img.d_extent;
     let [t0, t1] = img.t_extent;
@@ -120,7 +160,10 @@ pub fn heatmap(ui: &mut Ui, id: &str, img: &Image2d, nav: &mut PlotNav, fit: boo
     // The pointer is reported wherever it is: only this plot's own hover counts.
     let hovered = resp.response.hovered();
     let mut out = PlotOutcome {
-        hover: resp.inner.filter(|_| hovered).map(|p| (p.x, p.y, img.cell_at(p.x, p.y).map(|c| c.2))),
+        hover: resp
+            .inner
+            .filter(|_| hovered)
+            .map(|p| (p.x, p.y, img.cell_at(p.x, p.y).map(|c| c.2))),
         reset: resp.response.double_clicked(),
         ..PlotOutcome::default()
     };
@@ -135,7 +178,10 @@ pub fn colorbar(ui: &mut Ui, img: &Image2d, height: f32) {
     let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
     let painter = ui.painter_at(rect);
     let text_color = ui.visuals().text_color();
-    let bar = Rect::from_min_size(rect.min + vec2(4.0, 10.0), vec2(16.0, (height - 20.0).max(10.0)));
+    let bar = Rect::from_min_size(
+        rect.min + vec2(4.0, 10.0),
+        vec2(16.0, (height - 20.0).max(10.0)),
+    );
     let steps = 128;
     for i in 0..steps {
         let u0 = i as f32 / steps as f32;
@@ -146,18 +192,35 @@ pub fn colorbar(ui: &mut Ui, img: &Image2d, height: f32) {
         );
         painter.rect_filled(r, 0.0, img.color_at_unit((u0 + u1) / 2.0));
     }
-    painter.rect_stroke(bar, 0.0, Stroke::new(1.0, text_color.gamma_multiply(0.6)), egui::StrokeKind::Outside);
+    painter.rect_stroke(
+        bar,
+        0.0,
+        Stroke::new(1.0, text_color.gamma_multiply(0.6)),
+        egui::StrokeKind::Outside,
+    );
     let font = FontId::proportional(11.0);
     let ticks = 5;
     for k in 0..ticks {
         let u = k as f64 / (ticks - 1) as f64;
         let v = img.vmin + u * (img.vmax - img.vmin);
         let y = bar.bottom() - u as f32 * bar.height();
-        painter.line_segment([Pos2::new(bar.right(), y), Pos2::new(bar.right() + 4.0, y)], Stroke::new(1.0, text_color));
-        painter.text(Pos2::new(bar.right() + 6.0, y), Align2::LEFT_CENTER, fmt_g(v, 4), font.clone(), text_color);
+        painter.line_segment(
+            [Pos2::new(bar.right(), y), Pos2::new(bar.right() + 4.0, y)],
+            Stroke::new(1.0, text_color),
+        );
+        painter.text(
+            Pos2::new(bar.right() + 6.0, y),
+            Align2::LEFT_CENTER,
+            fmt_g(v, 4),
+            font.clone(),
+            text_color,
+        );
     }
     let galley = painter.layout_no_wrap(img.label.clone(), FontId::proportional(12.0), text_color);
-    let pos = Pos2::new(rect.right() - 2.0 - galley.size().y, bar.center().y + galley.size().x / 2.0);
+    let pos = Pos2::new(
+        rect.right() - 2.0 - galley.size().y,
+        bar.center().y + galley.size().x / 2.0,
+    );
     painter.add(TextShape::new(pos, galley, text_color).with_angle(-FRAC_PI_2));
 }
 
@@ -193,12 +256,28 @@ pub fn trace(
         let b = pui.plot_bounds();
         let range = (b.min()[0], b.max()[0]);
         if same {
-            pui.line(Line::new("trace", PlotPoints::from(envelope(times, lo, range, bins))).width(1.0));
+            pui.line(
+                Line::new("trace", PlotPoints::from(envelope(times, lo, range, bins))).width(1.0),
+            );
         } else {
             let (xs, los, his) = band(times, lo, hi, range, bins);
-            pui.add(FilledArea::new("envelope", &xs, &los, &his).fill_color(Color32::from_rgba_unmultiplied(31, 119, 180, 110)));
+            pui.add(
+                FilledArea::new("envelope", &xs, &los, &his)
+                    .fill_color(Color32::from_rgba_unmultiplied(31, 119, 180, 110)),
+            );
             let mid: Vec<f64> = los.iter().zip(&his).map(|(a, b)| 0.5 * (a + b)).collect();
-            pui.line(Line::new("trace", PlotPoints::from(xs.iter().zip(&mid).map(|(x, y)| [*x, *y]).collect::<Vec<_>>())).width(0.8));
+            pui.line(
+                Line::new(
+                    "trace",
+                    PlotPoints::from(
+                        xs.iter()
+                            .zip(&mid)
+                            .map(|(x, y)| [*x, *y])
+                            .collect::<Vec<_>>(),
+                    ),
+                )
+                .width(0.8),
+            );
         }
     });
     PlotOutcome {
@@ -209,7 +288,13 @@ pub fn trace(
 }
 
 /// The band between `lo` and `hi`, reduced to `bins` columns over the visible range.
-fn band(x: &[f64], lo: &[f64], hi: &[f64], range: (f64, f64), bins: usize) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
+fn band(
+    x: &[f64],
+    lo: &[f64],
+    hi: &[f64],
+    range: (f64, f64),
+    bins: usize,
+) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
     let n = x.len().min(lo.len()).min(hi.len());
     let a = x[..n].partition_point(|&v| v < range.0).saturating_sub(1);
     let b = (x[..n].partition_point(|&v| v <= range.1) + 1).min(n);
@@ -218,10 +303,20 @@ fn band(x: &[f64], lo: &[f64], hi: &[f64], range: (f64, f64), bins: usize) -> (V
     }
     let count = b - a;
     if count <= bins * 2 {
-        let keep: Vec<usize> = (a..b).filter(|&i| lo[i].is_finite() && hi[i].is_finite()).collect();
-        return (keep.iter().map(|&i| x[i]).collect(), keep.iter().map(|&i| lo[i]).collect(), keep.iter().map(|&i| hi[i]).collect());
+        let keep: Vec<usize> = (a..b)
+            .filter(|&i| lo[i].is_finite() && hi[i].is_finite())
+            .collect();
+        return (
+            keep.iter().map(|&i| x[i]).collect(),
+            keep.iter().map(|&i| lo[i]).collect(),
+            keep.iter().map(|&i| hi[i]).collect(),
+        );
     }
-    let (mut xs, mut los, mut his) = (Vec::with_capacity(bins), Vec::with_capacity(bins), Vec::with_capacity(bins));
+    let (mut xs, mut los, mut his) = (
+        Vec::with_capacity(bins),
+        Vec::with_capacity(bins),
+        Vec::with_capacity(bins),
+    );
     for k in 0..bins {
         let s = a + k * count / bins;
         let e = a + (k + 1) * count / bins;
@@ -288,9 +383,14 @@ impl LinePlot<'_> {
                 .y_axis_formatter(|mark, _| format!("1e{}", fmt_g(mark.value, 3)))
                 .label_formatter(|hp: &HoverPosition<'_>| {
                     let p = match hp {
-                        HoverPosition::NearDataPoint { position, .. } | HoverPosition::Elsewhere { position } => position,
+                        HoverPosition::NearDataPoint { position, .. }
+                        | HoverPosition::Elsewhere { position } => position,
                     };
-                    Some(format!("x = {}\ny = {}", fmt_g(p.x, 6), fmt_g(10f64.powf(p.y), 5)))
+                    Some(format!(
+                        "x = {}\ny = {}",
+                        fmt_g(p.x, 6),
+                        fmt_g(10f64.powf(p.y), 5)
+                    ))
                 });
         }
         let bins = (size.x as usize).max(200);
@@ -309,12 +409,22 @@ impl LinePlot<'_> {
                     envelope(x, y, range, bins)
                 };
                 let color = CURVE_COLORS[i % CURVE_COLORS.len()];
-                pui.line(Line::new(label.unwrap_or(""), PlotPoints::from(pts)).color(color).width(1.0));
+                pui.line(
+                    Line::new(label.unwrap_or(""), PlotPoints::from(pts))
+                        .color(color)
+                        .width(1.0),
+                );
             }
             if let Some((x, y, text)) = &self.marker {
-                pui.vline(VLine::new("", *x).color(Color32::from_rgb(214, 39, 40)).width(1.0));
+                pui.vline(
+                    VLine::new("", *x)
+                        .color(Color32::from_rgb(214, 39, 40))
+                        .width(1.0),
+                );
                 let y = if log_y { y.max(1e-300).log10() } else { *y };
-                pui.text(Text::new("", PlotPoint::new(*x, y), text.clone()).anchor(Align2::LEFT_BOTTOM));
+                pui.text(
+                    Text::new("", PlotPoint::new(*x, y), text.clone()).anchor(Align2::LEFT_BOTTOM),
+                );
             }
         });
     }
@@ -323,9 +433,14 @@ impl LinePlot<'_> {
 /// The fit bounds of curves over `[x0, x1]` (`y` padded by 5 %).
 pub fn fit_curves(curves: &[(&[f64], &[f64])], x0: f64, x1: f64, log_y: bool) -> [f64; 4] {
     let ys = curves.iter().flat_map(|(x, y)| {
-        x.iter().zip(y.iter()).filter(move |(xv, _)| **xv >= x0 && **xv <= x1).map(move |(_, yv)| {
-            if log_y { yv.max(1e-300).log10() } else { *yv }
-        })
+        x.iter()
+            .zip(y.iter())
+            .filter(move |(xv, _)| **xv >= x0 && **xv <= x1)
+            .map(
+                move |(_, yv)| {
+                    if log_y { yv.max(1e-300).log10() } else { *yv }
+                },
+            )
     });
     let (lo, hi) = min_max(ys);
     let pad = 0.05 * (hi - lo).abs().max(f64::EPSILON);

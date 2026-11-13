@@ -112,7 +112,9 @@ impl WorkerProcess {
             cmd.creation_flags(CREATE_NO_WINDOW);
         }
         let command_line = format!("{} -m {WORKER_MODULE}", words.join(" "));
-        let mut child = cmd.spawn().map_err(|e| format!("cannot start `{command_line}`: {e}"))?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| format!("cannot start `{command_line}`: {e}"))?;
         let stdout = child.stdout.take().expect("piped stdout");
         let stderr_pipe = child.stderr.take().expect("piped stderr");
         let stdin = child.stdin.take();
@@ -121,7 +123,14 @@ impl WorkerProcess {
         let stderr = Arc::new(Mutex::new(VecDeque::new()));
         spawn_stdout_reader(stdout, tx, waker.clone(), stderr.clone());
         spawn_stderr_reader(stderr_pipe, stderr.clone(), waker);
-        Ok(WorkerProcess { child, stdin, events: Mutex::new(rx), stderr, next_id: 0, command_line })
+        Ok(WorkerProcess {
+            child,
+            stdin,
+            events: Mutex::new(rx),
+            stderr,
+            next_id: 0,
+            command_line,
+        })
     }
 
     /// Sends `{"id": <new>, "cmd": cmd, ...fields}`; returns the id.
@@ -221,7 +230,11 @@ fn stopped_text(why: &str, stderr: &Arc<Mutex<VecDeque<String>>>) -> String {
     }
 }
 
-fn spawn_stderr_reader(stderr: std::process::ChildStderr, log: Arc<Mutex<VecDeque<String>>>, waker: Waker) {
+fn spawn_stderr_reader(
+    stderr: std::process::ChildStderr,
+    log: Arc<Mutex<VecDeque<String>>>,
+    waker: Waker,
+) {
     thread::Builder::new()
         .name("worker-stderr".into())
         .spawn(move || {
@@ -258,8 +271,14 @@ mod tests {
             split_command(r#""C:\Program Files\Python312\python.exe" -X utf8"#).unwrap(),
             vec![r"C:\Program Files\Python312\python.exe", "-X", "utf8"]
         );
-        assert_eq!(split_command("'/opt/my env/bin/python'").unwrap(), vec!["/opt/my env/bin/python"]);
-        assert_eq!(split_command(r"C:\Python312\python.exe").unwrap(), vec![r"C:\Python312\python.exe"]);
+        assert_eq!(
+            split_command("'/opt/my env/bin/python'").unwrap(),
+            vec!["/opt/my env/bin/python"]
+        );
+        assert_eq!(
+            split_command(r"C:\Python312\python.exe").unwrap(),
+            vec![r"C:\Python312\python.exe"]
+        );
     }
 
     #[test]
@@ -282,7 +301,9 @@ mod tests {
     #[test]
     fn a_missing_interpreter_is_an_error_not_a_panic() {
         let waker: Waker = Arc::new(|| {});
-        let err = WorkerProcess::spawn("/no/such/python-interpreter", waker).err().unwrap();
+        let err = WorkerProcess::spawn("/no/such/python-interpreter", waker)
+            .err()
+            .unwrap();
         assert!(err.contains("cannot start"), "{err}");
     }
 
@@ -314,7 +335,10 @@ mod tests {
                     _ => {}
                 }
             }
-            assert!(std::time::Instant::now() < deadline, "no hello from the worker");
+            assert!(
+                std::time::Instant::now() < deadline,
+                "no hello from the worker"
+            );
             thread::sleep(std::time::Duration::from_millis(20));
         }
     }

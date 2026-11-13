@@ -48,19 +48,29 @@ impl Settings {
     /// The saved settings, or the defaults (with the reason they could not
     /// be read, when a file exists but is unreadable).
     pub fn load_from(path: Option<&Path>) -> (Settings, Option<String>) {
-        let Some(path) = path else { return (Settings::default(), None) };
+        let Some(path) = path else {
+            return (Settings::default(), None);
+        };
         match std::fs::read(path) {
             Ok(bytes) => match serde_json::from_slice(&bytes) {
                 Ok(s) => (s, None),
-                Err(e) => (Settings::default(), Some(format!("{}: {e}; defaults used", path.display()))),
+                Err(e) => (
+                    Settings::default(),
+                    Some(format!("{}: {e}; defaults used", path.display())),
+                ),
             },
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => (Settings::default(), None),
-            Err(e) => (Settings::default(), Some(format!("{}: {e}; defaults used", path.display()))),
+            Err(e) => (
+                Settings::default(),
+                Some(format!("{}: {e}; defaults used", path.display())),
+            ),
         }
     }
 
     pub fn save_to(&self, path: Option<&Path>) -> Result<(), String> {
-        let Some(path) = path else { return Err("no configuration directory".into()) };
+        let Some(path) = path else {
+            return Err("no configuration directory".into());
+        };
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         }
@@ -83,7 +93,8 @@ mod tests {
     use super::*;
 
     fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("audace-gui-settings-{}-{name}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("audace-gui-settings-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir.join("sub").join("settings.json")
     }
@@ -91,7 +102,10 @@ mod tests {
     #[test]
     fn round_trips_through_the_file() {
         let path = scratch("roundtrip");
-        let mut s = Settings { interpreter: r#""C:\Py 3\python.exe""#.into(), ..Settings::default() };
+        let mut s = Settings {
+            interpreter: r#""C:\Py 3\python.exe""#.into(),
+            ..Settings::default()
+        };
         s.remember_file("/data/a.h5");
         s.save_to(Some(&path)).unwrap();
         let (back, warning) = Settings::load_from(Some(&path));

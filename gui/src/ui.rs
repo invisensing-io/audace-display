@@ -21,7 +21,9 @@ pub fn draw(app: &mut GuiApp, ctx: &egui::Context) {
     let mut root = Ui::new(
         ctx.clone(),
         "root".into(),
-        UiBuilder::new().layer_id(egui::LayerId::background()).max_rect(ctx.viewport_rect()),
+        UiBuilder::new()
+            .layer_id(egui::LayerId::background())
+            .max_rect(ctx.viewport_rect()),
     );
     egui::Panel::top("top_bar").show(&mut root, |ui| top_bar(app, ui));
     egui::Panel::bottom("status_bar").show(&mut root, |ui| status_bar(app, ui));
@@ -30,7 +32,9 @@ pub fn draw(app: &mut GuiApp, ctx: &egui::Context) {
         .default_size(330.0)
         .size_range(260.0..=600.0)
         .show(&mut root, |ui| {
-            ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| options_panel(app, ui));
+            ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| options_panel(app, ui));
         });
     egui::CentralPanel::default().show(&mut root, |ui| central(app, ui));
     settings_window(app, ctx);
@@ -43,7 +47,11 @@ pub fn draw(app: &mut GuiApp, ctx: &egui::Context) {
 fn top_bar(app: &mut GuiApp, ui: &mut Ui) {
     ui.horizontal(|ui| {
         let ready = app.worker_ready();
-        if ui.add_enabled(!app.dialog_open(), egui::Button::new("Open…")).on_hover_text("Choose a recording").clicked() {
+        if ui
+            .add_enabled(!app.dialog_open(), egui::Button::new("Open…"))
+            .on_hover_text("Choose a recording")
+            .clicked()
+        {
             app.pick_file();
         }
         let recent = app.settings.recent_files.clone();
@@ -59,7 +67,9 @@ fn top_bar(app: &mut GuiApp, ui: &mut Ui) {
         });
         ui.separator();
         let edit = egui::TextEdit::singleline(&mut app.path_input)
-            .hint_text("Path of a .dat / .h5 / .hdf5 / .tdms / .sgy file (or drop it on the window)")
+            .hint_text(
+                "Path of a .dat / .h5 / .hdf5 / .tdms / .sgy file (or drop it on the window)",
+            )
             .desired_width(ui.available_width() - 260.0);
         let response = ui.add(edit);
         let enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
@@ -68,10 +78,18 @@ fn top_bar(app: &mut GuiApp, ui: &mut Ui) {
             app.open_file(path);
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if ui.button("Log").on_hover_text("What the Python worker printed").clicked() {
+            if ui
+                .button("Log")
+                .on_hover_text("What the Python worker printed")
+                .clicked()
+            {
                 app.show_log = !app.show_log;
             }
-            if ui.button("Settings").on_hover_text("Python interpreter, auto-update").clicked() {
+            if ui
+                .button("Settings")
+                .on_hover_text("Python interpreter, auto-update")
+                .clicked()
+            {
                 app.show_settings = !app.show_settings;
                 app.interpreter_input = app.settings.interpreter.clone();
             }
@@ -91,7 +109,11 @@ fn status_bar(app: &mut GuiApp, ui: &mut Ui) {
                         "audace-display {} · invisensing {} · Python {}",
                         h.audace_display, h.invisensing, h.python
                     ))
-                    .on_hover_text(format!("{}\nnumpy {}", app.worker_command(), h.numpy));
+                    .on_hover_text(format!(
+                        "{}\nnumpy {}",
+                        app.worker_command(),
+                        h.numpy
+                    ));
                 }
             }
             WorkerState::Starting { .. } => {
@@ -124,7 +146,12 @@ fn status_bar(app: &mut GuiApp, ui: &mut Ui) {
                 },
                 None => (0.0, "computing…".to_string()),
             };
-            ui.add(egui::ProgressBar::new(fraction).desired_width(260.0).text(text).animate(true));
+            ui.add(
+                egui::ProgressBar::new(fraction)
+                    .desired_width(260.0)
+                    .text(text)
+                    .animate(true),
+            );
             if app.cancelling() {
                 ui.label("Stopping…");
             } else if ui.button("Cancel").clicked() {
@@ -162,8 +189,15 @@ fn options_panel(app: &mut GuiApp, ui: &mut Ui) {
     let available: Vec<(View, bool, Option<String>)> = View::ALL
         .iter()
         .map(|&v| {
-            let a = app.file.as_ref().and_then(|f| f.views.iter().find(|x| x.name == v.cli_name()));
-            (v, a.is_none_or(|a| a.available), a.and_then(|a| a.reason.clone()))
+            let a = app
+                .file
+                .as_ref()
+                .and_then(|f| f.views.iter().find(|x| x.name == v.cli_name()));
+            (
+                v,
+                a.is_none_or(|a| a.available),
+                a.and_then(|a| a.reason.clone()),
+            )
         })
         .filter(|(v, _, _)| app.options.contains_key(v) || app.hello.is_none())
         .collect();
@@ -171,7 +205,11 @@ fn options_panel(app: &mut GuiApp, ui: &mut Ui) {
         for (v, ok, reason) in &available {
             let r = ui.add_enabled(*ok, egui::Button::selectable(app.view == *v, v.label()));
             let r = r.on_hover_text(v.description());
-            let r = if let Some(reason) = reason { r.on_disabled_hover_text(reason) } else { r };
+            let r = if let Some(reason) = reason {
+                r.on_disabled_hover_text(reason)
+            } else {
+                r
+            };
             if r.clicked() {
                 app.view = *v;
             }
@@ -190,36 +228,65 @@ fn options_panel(app: &mut GuiApp, ui: &mut Ui) {
     if view == View::Info {
         return;
     }
-    let colormaps = app.hello.as_ref().map(|h| h.colormaps.clone()).unwrap_or_default();
-    let summary = app.file.as_ref().map(|f| f.summary.clone()).unwrap_or_default();
-    let Some(opts) = app.options.get_mut(&view) else { return };
-    let groups: Vec<(&'static str, Vec<OptionSchema>)> =
-        opts.grouped(view).into_iter().map(|(t, v)| (t, v.into_iter().cloned().collect())).collect();
+    let colormaps = app
+        .hello
+        .as_ref()
+        .map(|h| h.colormaps.clone())
+        .unwrap_or_default();
+    let summary = app
+        .file
+        .as_ref()
+        .map(|f| f.summary.clone())
+        .unwrap_or_default();
+    let Some(opts) = app.options.get_mut(&view) else {
+        return;
+    };
+    let groups: Vec<(&'static str, Vec<OptionSchema>)> = opts
+        .grouped(view)
+        .into_iter()
+        .map(|(t, v)| (t, v.into_iter().cloned().collect()))
+        .collect();
     for (title, options) in groups {
-        egui::CollapsingHeader::new(RichText::new(title).strong()).id_salt((view, title)).default_open(true).show(ui, |ui| {
-            egui::Grid::new((view, title, "grid")).num_columns(2).spacing([8.0, 6.0]).striped(false).show(ui, |ui| {
-                // The exclusive pairs get one radio each.
-                if title == "Positions" && view == View::Fft {
-                    fft_positions(opts, ui, &summary);
-                    return;
-                }
-                if title == "Location" && view == View::Inspect {
-                    inspect_location(opts, ui, &summary);
-                    return;
-                }
-                for o in &options {
-                    option_row(opts, o, ui, &colormaps);
-                }
+        egui::CollapsingHeader::new(RichText::new(title).strong())
+            .id_salt((view, title))
+            .default_open(true)
+            .show(ui, |ui| {
+                egui::Grid::new((view, title, "grid"))
+                    .num_columns(2)
+                    .spacing([8.0, 6.0])
+                    .striped(false)
+                    .show(ui, |ui| {
+                        // The exclusive pairs get one radio each.
+                        if title == "Positions" && view == View::Fft {
+                            fft_positions(opts, ui, &summary);
+                            return;
+                        }
+                        if title == "Location" && view == View::Inspect {
+                            inspect_location(opts, ui, &summary);
+                            return;
+                        }
+                        for o in &options {
+                            option_row(opts, o, ui, &colormaps);
+                        }
+                    });
             });
-        });
     }
     ui.add_space(8.0);
     ui.horizontal(|ui| {
         let stale = app.is_stale();
-        if ui.add_enabled(app.worker_ready(), egui::Button::new(if stale { "Render (changed)" } else { "Render" })).clicked() {
+        if ui
+            .add_enabled(
+                app.worker_ready(),
+                egui::Button::new(if stale { "Render (changed)" } else { "Render" }),
+            )
+            .clicked()
+        {
             app.render_now();
         }
-        if ui.button("CLI defaults").on_hover_text("Every option of this view back to the CLI's default").clicked()
+        if ui
+            .button("CLI defaults")
+            .on_hover_text("Every option of this view back to the CLI's default")
+            .clicked()
             && let Some(o) = app.options.get_mut(&view)
         {
             o.reset();
@@ -231,62 +298,85 @@ fn options_panel(app: &mut GuiApp, ui: &mut Ui) {
         }
     });
     if view == View::Scope {
-        ui.label(RichText::new("Speed, frame rate and the shown line are set above the plot.").weak());
+        ui.label(
+            RichText::new("Speed, frame rate and the shown line are set above the plot.").weak(),
+        );
     }
 }
 
 fn data_section(app: &mut GuiApp, ui: &mut Ui) {
     let Some(file) = app.file.clone() else { return };
     let view_has_channel = app.options.get(&app.view).is_some_and(|o| o.has("channel"));
-    egui::Grid::new("data_grid").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
-        ui.label("Channel");
-        ui.add_enabled_ui(view_has_channel, |ui| {
-            let shown = app.channel.clone().unwrap_or_else(|| format!("{} (default)", file.default_channel));
-            egui::ComboBox::from_id_salt("channel").selected_text(shown).show_ui(ui, |ui| {
-                ui.selectable_value(&mut app.channel, None, format!("{} (default)", file.default_channel));
-                for c in &file.channels {
-                    ui.selectable_value(&mut app.channel, Some(c.clone()), c);
+    egui::Grid::new("data_grid")
+        .num_columns(2)
+        .spacing([8.0, 6.0])
+        .show(ui, |ui| {
+            ui.label("Channel");
+            ui.add_enabled_ui(view_has_channel, |ui| {
+                let shown = app
+                    .channel
+                    .clone()
+                    .unwrap_or_else(|| format!("{} (default)", file.default_channel));
+                egui::ComboBox::from_id_salt("channel")
+                    .selected_text(shown)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut app.channel,
+                            None,
+                            format!("{} (default)", file.default_channel),
+                        );
+                        for c in &file.channels {
+                            ui.selectable_value(&mut app.channel, Some(c.clone()), c);
+                        }
+                    });
+            })
+            .response
+            .on_disabled_hover_text("The CLI's info always describes the default channel.");
+            ui.end_row();
+
+            ui.label("Unit");
+            ui.vertical(|ui| {
+                let units = app
+                    .hello
+                    .as_ref()
+                    .map(|h| h.units.clone())
+                    .unwrap_or_default();
+                for u in units {
+                    let avail = file.units.iter().find(|a| a.name == u.name);
+                    let ok = avail.is_none_or(|a| a.available);
+                    let text = match (&u.unit, u.name.as_str()) {
+                        (_, "rad") => "As stored".to_string(),
+                        (Some(unit), _) => format!("{} ({unit})", u.quantity),
+                        (None, _) => u.quantity.clone(),
+                    };
+                    let r = ui.add_enabled(ok, egui::RadioButton::new(app.unit == u.name, text));
+                    let r = match &u.flag {
+                        Some(flag) => r.on_hover_text(format!("The CLI's {flag}")),
+                        None => r.on_hover_text("The samples as the file stores them"),
+                    };
+                    let r = match avail.and_then(|a| a.reason.clone()) {
+                        Some(reason) => r.on_disabled_hover_text(reason),
+                        None => r,
+                    };
+                    if r.clicked() {
+                        app.unit = u.name.clone();
+                    }
                 }
             });
-        })
-        .response
-        .on_disabled_hover_text("The CLI's info always describes the default channel.");
-        ui.end_row();
-
-        ui.label("Unit");
-        ui.vertical(|ui| {
-            let units = app.hello.as_ref().map(|h| h.units.clone()).unwrap_or_default();
-            for u in units {
-                let avail = file.units.iter().find(|a| a.name == u.name);
-                let ok = avail.is_none_or(|a| a.available);
-                let text = match (&u.unit, u.name.as_str()) {
-                    (_, "rad") => "As stored".to_string(),
-                    (Some(unit), _) => format!("{} ({unit})", u.quantity),
-                    (None, _) => u.quantity.clone(),
-                };
-                let r = ui.add_enabled(ok, egui::RadioButton::new(app.unit == u.name, text));
-                let r = match &u.flag {
-                    Some(flag) => r.on_hover_text(format!("The CLI's {flag}")),
-                    None => r.on_hover_text("The samples as the file stores them"),
-                };
-                let r = match avail.and_then(|a| a.reason.clone()) {
-                    Some(reason) => r.on_disabled_hover_text(reason),
-                    None => r,
-                };
-                if r.clicked() {
-                    app.unit = u.name.clone();
-                }
-            }
+            ui.end_row();
         });
-        ui.end_row();
-    });
     ui.separator();
 }
 
 fn option_label(ui: &mut Ui, o: &OptionSchema, is_default: bool) {
     let text = params::humanize(&o.dest);
-    let rich = if is_default { RichText::new(text) } else { RichText::new(text).strong() };
-    ui.label(rich).on_hover_text(format!("{}\n\nCLI: {}", o.help, o.flag));
+    let rich = if is_default {
+        RichText::new(text)
+    } else {
+        RichText::new(text).strong()
+    };
+    ui.label(rich)
+        .on_hover_text(format!("{}\n\nCLI: {}", o.help, o.flag));
 }
 
 /// One option: a checkbox, a number (optionally "auto"), a choice or text.
@@ -315,8 +405,17 @@ fn number_edit(ui: &mut Ui, o: &OptionSchema, current: &Value) -> Option<Value> 
     let mut out = None;
     ui.horizontal(|ui| {
         let mut set = !current.is_null();
-        if optional && ui.checkbox(&mut set, "").on_hover_text("Unchecked: the CLI's default (auto)").changed() {
-            out = Some(if set { params::number(o.kind, suggested(o)) } else { Value::Null });
+        if optional
+            && ui
+                .checkbox(&mut set, "")
+                .on_hover_text("Unchecked: the CLI's default (auto)")
+                .changed()
+        {
+            out = Some(if set {
+                params::number(o.kind, suggested(o))
+            } else {
+                Value::Null
+            });
         }
         if set || !optional {
             let mut x = current.as_f64().unwrap_or_else(|| suggested(o));
@@ -371,33 +470,48 @@ fn choice_edit(ui: &mut Ui, o: &OptionSchema, current: &Value) -> Option<Value> 
         other => other.to_string(),
     };
     let mut selected = current.clone();
-    egui::ComboBox::from_id_salt(("choice", &o.dest)).selected_text(text(&selected)).show_ui(ui, |ui| {
-        if o.default.is_null() {
-            ui.selectable_value(&mut selected, Value::Null, "off");
-        }
-        for c in &choices {
-            ui.selectable_value(&mut selected, c.clone(), text(c));
-        }
-    });
+    egui::ComboBox::from_id_salt(("choice", &o.dest))
+        .selected_text(text(&selected))
+        .show_ui(ui, |ui| {
+            if o.default.is_null() {
+                ui.selectable_value(&mut selected, Value::Null, "off");
+            }
+            for c in &choices {
+                ui.selectable_value(&mut selected, c.clone(), text(c));
+            }
+        });
     (&selected != current).then_some(selected)
 }
 
 fn cmap_edit(ui: &mut Ui, current: &Value, colormaps: &[String]) -> Option<Value> {
     let mut selected = current.clone();
     let shown = current.as_str().unwrap_or("auto (CLI default)").to_string();
-    egui::ComboBox::from_id_salt("cmap").selected_text(shown).height(400.0).show_ui(ui, |ui| {
-        ui.selectable_value(&mut selected, Value::Null, "auto (CLI default)");
-        for name in colormaps {
-            ui.selectable_value(&mut selected, json!(name), name);
-        }
-    });
+    egui::ComboBox::from_id_salt("cmap")
+        .selected_text(shown)
+        .height(400.0)
+        .show_ui(ui, |ui| {
+            ui.selectable_value(&mut selected, Value::Null, "auto (CLI default)");
+            for name in colormaps {
+                ui.selectable_value(&mut selected, json!(name), name);
+            }
+        });
     (&selected != current).then_some(selected)
 }
 
 fn text_edit(ui: &mut Ui, o: &OptionSchema, current: &Value) -> Option<Value> {
     let mut s = current.as_str().map(str::to_string).unwrap_or_default();
-    let r = ui.add(egui::TextEdit::singleline(&mut s).hint_text("default").desired_width(140.0));
-    r.changed().then(|| if s.trim().is_empty() && !o.required { Value::Null } else { json!(s) })
+    let r = ui.add(
+        egui::TextEdit::singleline(&mut s)
+            .hint_text("default")
+            .desired_width(140.0),
+    );
+    r.changed().then(|| {
+        if s.trim().is_empty() && !o.required {
+            Value::Null
+        } else {
+            json!(s)
+        }
+    })
 }
 
 fn fft_positions(opts: &mut params::ViewOptions, ui: &mut Ui, summary: &crate::protocol::Summary) {
@@ -409,13 +523,21 @@ fn fft_positions(opts: &mut params::ViewOptions, ui: &mut Ui, summary: &crate::p
     }
     let pos = opts.get("position").clone();
     let range = opts.get("position_range").clone();
-    let mode = if !pos.is_null() { Mode::List } else if !range.is_null() { Mode::Range } else { Mode::Whole };
+    let mode = if !pos.is_null() {
+        Mode::List
+    } else if !range.is_null() {
+        Mode::Range
+    } else {
+        Mode::Whole
+    };
     let mut chosen = mode;
     ui.label("Where");
     ui.vertical(|ui| {
         ui.radio_value(&mut chosen, Mode::Whole, "Whole fibre (average)");
-        ui.radio_value(&mut chosen, Mode::List, "Positions (m)").on_hover_text("'12.5' or '10,20,30': one curve per position");
-        ui.radio_value(&mut chosen, Mode::Range, "Range (m)").on_hover_text("'50:100': averaged");
+        ui.radio_value(&mut chosen, Mode::List, "Positions (m)")
+            .on_hover_text("'12.5' or '10,20,30': one curve per position");
+        ui.radio_value(&mut chosen, Mode::Range, "Range (m)")
+            .on_hover_text("'50:100': averaged");
     });
     ui.end_row();
     if chosen != mode {
@@ -423,7 +545,10 @@ fn fft_positions(opts: &mut params::ViewOptions, ui: &mut Ui, summary: &crate::p
         let (p, r) = match chosen {
             Mode::Whole => (Value::Null, Value::Null),
             Mode::List => (json!(mid), Value::Null),
-            Mode::Range => (Value::Null, json!(format!("0:{}", fmt_g(summary.length_m, 6)))),
+            Mode::Range => (
+                Value::Null,
+                json!(format!("0:{}", fmt_g(summary.length_m, 6))),
+            ),
         };
         opts.set("position", p);
         opts.set("position_range", r);
@@ -432,7 +557,9 @@ fn fft_positions(opts: &mut params::ViewOptions, ui: &mut Ui, summary: &crate::p
         if opts.get(dest).is_null() {
             continue;
         }
-        let Some(o) = opts.schema.option(dest).cloned() else { continue };
+        let Some(o) = opts.schema.option(dest).cloned() else {
+            continue;
+        };
         option_label(ui, &o, false);
         if let Some(v) = text_edit(ui, &o, &opts.get(dest).clone()) {
             opts.set(dest, if v.is_null() { json!("") } else { v });
@@ -441,7 +568,11 @@ fn fft_positions(opts: &mut params::ViewOptions, ui: &mut Ui, summary: &crate::p
     }
 }
 
-fn inspect_location(opts: &mut params::ViewOptions, ui: &mut Ui, summary: &crate::protocol::Summary) {
+fn inspect_location(
+    opts: &mut params::ViewOptions,
+    ui: &mut Ui,
+    summary: &crate::protocol::Summary,
+) {
     #[derive(PartialEq, Clone, Copy)]
     enum Mode {
         Middle,
@@ -477,13 +608,21 @@ fn inspect_location(opts: &mut params::ViewOptions, ui: &mut Ui, summary: &crate
         if opts.get(dest).is_null() {
             continue;
         }
-        let Some(o) = opts.schema.option(dest).cloned() else { continue };
+        let Some(o) = opts.schema.option(dest).cloned() else {
+            continue;
+        };
         option_label(ui, &o, false);
         let mut x = opts.get(dest).as_f64().unwrap_or(0.0);
         let dv = if o.kind == OptionKind::Int {
-            egui::DragValue::new(&mut x).speed(1.0).max_decimals(0).range(0.0..=summary.positions.saturating_sub(1) as f64)
+            egui::DragValue::new(&mut x)
+                .speed(1.0)
+                .max_decimals(0)
+                .range(0.0..=summary.positions.saturating_sub(1) as f64)
         } else {
-            egui::DragValue::new(&mut x).speed(0.5).range(0.0..=summary.length_m).suffix(" m")
+            egui::DragValue::new(&mut x)
+                .speed(0.5)
+                .range(0.0..=summary.length_m)
+                .suffix(" m")
         };
         if ui.add(dv).changed() {
             opts.set(dest, params::number(o.kind, x));
@@ -499,7 +638,11 @@ fn central(app: &mut GuiApp, ui: &mut Ui) {
     if let WorkerState::Failed(why) = &app.worker_state {
         let why = why.clone();
         ui.add_space(12.0);
-        ui.label(RichText::new("The Python worker could not run").heading().color(ERROR_COLOR));
+        ui.label(
+            RichText::new("The Python worker could not run")
+                .heading()
+                .color(ERROR_COLOR),
+        );
         ui.add_space(6.0);
         ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
             ui.label(RichText::new(why).monospace());
@@ -518,7 +661,12 @@ fn central(app: &mut GuiApp, ui: &mut Ui) {
     }
     let Some(file) = &app.file else {
         ui.centered_and_justified(|ui| {
-            ui.label(RichText::new("Open a recording (Open…, a path above, or drop a file on the window).").size(16.0));
+            ui.label(
+                RichText::new(
+                    "Open a recording (Open…, a path above, or drop a file on the window).",
+                )
+                .size(16.0),
+            );
         });
         return;
     };
@@ -533,26 +681,32 @@ fn central(app: &mut GuiApp, ui: &mut Ui) {
             "file" => ("File error", ERROR_COLOR),
             _ => ("Error", ERROR_COLOR),
         };
-        egui::Frame::group(ui.style()).stroke(egui::Stroke::new(1.0, color)).show(ui, |ui| {
-            ui.label(RichText::new(title).strong().color(color));
-            ui.label(&e.message);
-            if (e.kind == "cancelled" || e.kind == "internal") && ui.button("Render again").clicked() {
-                app.render_now();
-            }
-        });
+        egui::Frame::group(ui.style())
+            .stroke(egui::Stroke::new(1.0, color))
+            .show(ui, |ui| {
+                ui.label(RichText::new(title).strong().color(color));
+                ui.label(&e.message);
+                if (e.kind == "cancelled" || e.kind == "internal")
+                    && ui.button("Render again").clicked()
+                {
+                    app.render_now();
+                }
+            });
         if !app.results.contains_key(&view) {
             return;
         }
         ui.add_space(4.0);
     }
     if !app.warnings.is_empty() {
-        egui::CollapsingHeader::new(RichText::new(format!("{} warning(s)", app.warnings.len())).color(WARNING_COLOR))
-            .id_salt("warnings")
-            .show(ui, |ui| {
-                for w in &app.warnings {
-                    ui.label(RichText::new(w).color(WARNING_COLOR));
-                }
-            });
+        egui::CollapsingHeader::new(
+            RichText::new(format!("{} warning(s)", app.warnings.len())).color(WARNING_COLOR),
+        )
+        .id_salt("warnings")
+        .show(ui, |ui| {
+            for w in &app.warnings {
+                ui.label(RichText::new(w).color(WARNING_COLOR));
+            }
+        });
     }
 
     let stale = app.is_stale() && app.results.contains_key(&view);
@@ -567,7 +721,10 @@ fn central(app: &mut GuiApp, ui: &mut Ui) {
         return;
     }
     if stale && !app.busy() && !app.render_pending() && !app.settings.auto_render {
-        ui.label(RichText::new("The options changed: press Render to update the view.").color(WARNING_COLOR));
+        ui.label(
+            RichText::new("The options changed: press Render to update the view.")
+                .color(WARNING_COLOR),
+        );
     }
 
     match view {
@@ -616,40 +773,76 @@ fn info_view(app: &mut GuiApp, ui: &mut Ui) {
         Some((_, ViewResult::Info(t))) => t.clone(),
         _ => file.info_text.clone(),
     };
-    ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-        ui.heading(&s.name);
-        egui::Grid::new("summary").num_columns(2).striped(true).spacing([16.0, 4.0]).show(ui, |ui| {
-            let mut row = |k: &str, v: String| {
-                ui.label(RichText::new(k).strong());
-                ui.label(v);
-                ui.end_row();
-            };
-            row("Mode", s.mode.clone());
-            if s.content_type != 0 {
-                row("Content type", format!("{} ({})", s.content_type_name, s.content_type));
-            }
-            if let Some(q) = &s.quantity {
-                row("Quantity", q.clone());
-            }
-            row("Gauge length", s.gauge_length_m.map_or("not recorded".into(), |g| format!("{} m", fmt_g(g, 6))));
-            row("Trigger frequency", s.trig_frequency.clone());
-            row("Line rate used", format!("{} Hz", fmt_g(s.line_rate_hz, 10)));
-            row("Time correction", s.time_correction.clone().unwrap_or_else(|| "none recorded".into()));
-            row("Start", s.start_time.clone());
-            row("Pulses", group(s.num_lines));
-            row("Duration", format!("{} s", fmt_g(s.duration_s, 7)));
-            row("Positions", format!("{} x {} m = {} m", group(s.positions), fmt_g(s.step_m, 6), fmt_g(s.length_m, 7)));
-            if let Some(c) = &s.compression {
-                row("Compression", c.clone());
-            }
-            let channels = file.channels.join(", ");
-            row("Channels", format!("{channels} (default {})", file.default_channel));
+    ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.heading(&s.name);
+            egui::Grid::new("summary")
+                .num_columns(2)
+                .striped(true)
+                .spacing([16.0, 4.0])
+                .show(ui, |ui| {
+                    let mut row = |k: &str, v: String| {
+                        ui.label(RichText::new(k).strong());
+                        ui.label(v);
+                        ui.end_row();
+                    };
+                    row("Mode", s.mode.clone());
+                    if s.content_type != 0 {
+                        row(
+                            "Content type",
+                            format!("{} ({})", s.content_type_name, s.content_type),
+                        );
+                    }
+                    if let Some(q) = &s.quantity {
+                        row("Quantity", q.clone());
+                    }
+                    row(
+                        "Gauge length",
+                        s.gauge_length_m
+                            .map_or("not recorded".into(), |g| format!("{} m", fmt_g(g, 6))),
+                    );
+                    row("Trigger frequency", s.trig_frequency.clone());
+                    row(
+                        "Line rate used",
+                        format!("{} Hz", fmt_g(s.line_rate_hz, 10)),
+                    );
+                    row(
+                        "Time correction",
+                        s.time_correction
+                            .clone()
+                            .unwrap_or_else(|| "none recorded".into()),
+                    );
+                    row("Start", s.start_time.clone());
+                    row("Pulses", group(s.num_lines));
+                    row("Duration", format!("{} s", fmt_g(s.duration_s, 7)));
+                    row(
+                        "Positions",
+                        format!(
+                            "{} x {} m = {} m",
+                            group(s.positions),
+                            fmt_g(s.step_m, 6),
+                            fmt_g(s.length_m, 7)
+                        ),
+                    );
+                    if let Some(c) = &s.compression {
+                        row("Compression", c.clone());
+                    }
+                    let channels = file.channels.join(", ");
+                    row(
+                        "Channels",
+                        format!("{channels} (default {})", file.default_channel),
+                    );
+                });
+            ui.add_space(10.0);
+            ui.label(RichText::new("audace-display info").strong());
+            let mut t = text.as_str();
+            ui.add(
+                egui::TextEdit::multiline(&mut t)
+                    .font(egui::TextStyle::Monospace)
+                    .desired_width(f32::INFINITY),
+            );
         });
-        ui.add_space(10.0);
-        ui.label(RichText::new("audace-display info").strong());
-        let mut t = text.as_str();
-        ui.add(egui::TextEdit::multiline(&mut t).font(egui::TextStyle::Monospace).desired_width(f32::INFINITY));
-    });
 }
 
 fn zoom_bar(app: &mut GuiApp, ui: &mut Ui, readout: Option<String>) {
@@ -670,7 +863,7 @@ fn zoom_bar(app: &mut GuiApp, ui: &mut Ui, readout: Option<String>) {
                 app.reset_zoom();
             }
         } else {
-            ui.label(RichText::new("Scroll to zoom, drag to pan, double-click to reset: the window is recomputed.").weak());
+            ui.label(RichText::new("Ctrl+scroll to zoom, right-drag a box, drag or scroll to pan, double-click to reset: the window is recomputed.").weak());
         }
         if let Some(r) = readout {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -684,7 +877,11 @@ fn zoom_bar(app: &mut GuiApp, ui: &mut Ui, readout: Option<String>) {
 fn apply_zoom(app: &mut GuiApp, bounds: [f64; 4], with_distance: bool) {
     let Some(file) = &app.file else { return };
     let s = &file.summary;
-    let (t0, t1) = if with_distance { (bounds[1], bounds[3]) } else { (bounds[0], bounds[2]) };
+    let (t0, t1) = if with_distance {
+        (bounds[1], bounds[3])
+    } else {
+        (bounds[0], bounds[2])
+    };
     let t0 = t0.max(0.0);
     let t1 = t1.min(s.duration_s);
     if t1 <= t0 {
@@ -704,7 +901,9 @@ fn apply_zoom(app: &mut GuiApp, bounds: [f64; 4], with_distance: bool) {
 }
 
 fn heatmap_view(app: &mut GuiApp, ui: &mut Ui) {
-    let Some((_, ViewResult::Heatmap(img))) = app.results.get(&View::Heatmap) else { return };
+    let Some((_, ViewResult::Heatmap(img))) = app.results.get(&View::Heatmap) else {
+        return;
+    };
     title(ui, &img.title);
     let mut nav = app.nav.remove(&View::Heatmap).unwrap_or_default();
     let fit = std::mem::take(&mut nav.fit);
@@ -716,7 +915,11 @@ fn heatmap_view(app: &mut GuiApp, ui: &mut Ui) {
         plots::colorbar(ui, img, plot_size.y);
     });
     let readout = hover_readout(&outcome, &img.label);
-    let info = format!("{} x {} bins", group(img.rows as u64), group(img.cols as u64));
+    let info = format!(
+        "{} x {} bins",
+        group(img.rows as u64),
+        group(img.cols as u64)
+    );
     app.nav.insert(View::Heatmap, nav);
     zoom_bar(app, ui, Some(format!("{readout}   ({info})")));
     after_zoomable(app, outcome, true);
@@ -724,7 +927,12 @@ fn heatmap_view(app: &mut GuiApp, ui: &mut Ui) {
 
 fn hover_readout(outcome: &plots::PlotOutcome, label: &str) -> String {
     match outcome.hover {
-        Some((d, t, Some(v))) => format!("t = {} s   d = {} m   {label} = {}", fmt_g(t, 6), fmt_g(d, 6), fmt_g(v as f64, 5)),
+        Some((d, t, Some(v))) => format!(
+            "t = {} s   d = {} m   {label} = {}",
+            fmt_g(t, 6),
+            fmt_g(d, 6),
+            fmt_g(v as f64, 5)
+        ),
         Some((d, t, None)) => format!("t = {} s   d = {} m", fmt_g(t, 6), fmt_g(d, 6)),
         None => String::new(),
     }
@@ -739,10 +947,25 @@ fn after_zoomable(app: &mut GuiApp, outcome: plots::PlotOutcome, with_distance: 
 }
 
 fn bands_view(app: &mut GuiApp, ui: &mut Ui) {
-    let Some((_, ViewResult::Bands { title: suptitle, panels })) = app.results.get(&View::Bands) else { return };
+    let Some((
+        _,
+        ViewResult::Bands {
+            title: suptitle,
+            panels,
+        },
+    )) = app.results.get(&View::Bands)
+    else {
+        return;
+    };
     title(ui, suptitle);
     let n = panels.len();
-    let ncols = if n == 1 { 1 } else if n <= 4 { 2 } else { 3 };
+    let ncols = if n == 1 {
+        1
+    } else if n <= 4 {
+        2
+    } else {
+        3
+    };
     let nrows = n.div_ceil(ncols);
     let avail = ui.available_size();
     let cell = vec2(avail.x / ncols as f32, (avail.y - 30.0) / nrows as f32);
@@ -751,30 +974,41 @@ fn bands_view(app: &mut GuiApp, ui: &mut Ui) {
     let fit = std::mem::take(&mut nav.fit);
     let mut outcome = plots::PlotOutcome::default();
     let mut readout = String::new();
-    egui::Grid::new("bands").num_columns(ncols).spacing([6.0, 4.0]).show(ui, |ui| {
-        for (i, img) in panels.iter().enumerate() {
-            ui.vertical(|ui| {
-                ui.label(RichText::new(&img.title).strong());
-                ui.horizontal(|ui| {
-                    // Panel 0 follows the zoom; the others are linked to it.
-                    let mut scratch = crate::app::PlotNav::default();
-                    let nav_i = if i == 0 { &mut nav } else { &mut scratch };
-                    let o = plots::heatmap(ui, &format!("band{i}"), img, nav_i, fit, Some("bands"), plot_size);
-                    if o.hover.is_some() {
-                        readout = hover_readout(&o, &img.label);
-                    }
-                    if i == 0 {
-                        outcome.new_bounds = o.new_bounds;
-                    }
-                    outcome.reset |= o.reset;
-                    plots::colorbar(ui, img, plot_size.y);
+    egui::Grid::new("bands")
+        .num_columns(ncols)
+        .spacing([6.0, 4.0])
+        .show(ui, |ui| {
+            for (i, img) in panels.iter().enumerate() {
+                ui.vertical(|ui| {
+                    ui.label(RichText::new(&img.title).strong());
+                    ui.horizontal(|ui| {
+                        // Panel 0 follows the zoom; the others are linked to it.
+                        let mut scratch = crate::app::PlotNav::default();
+                        let nav_i = if i == 0 { &mut nav } else { &mut scratch };
+                        let o = plots::heatmap(
+                            ui,
+                            &format!("band{i}"),
+                            img,
+                            nav_i,
+                            fit,
+                            Some("bands"),
+                            plot_size,
+                        );
+                        if o.hover.is_some() {
+                            readout = hover_readout(&o, &img.label);
+                        }
+                        if i == 0 {
+                            outcome.new_bounds = o.new_bounds;
+                        }
+                        outcome.reset |= o.reset;
+                        plots::colorbar(ui, img, plot_size.y);
+                    });
                 });
-            });
-            if (i + 1) % ncols == 0 {
-                ui.end_row();
+                if (i + 1) % ncols == 0 {
+                    ui.end_row();
+                }
             }
-        }
-    });
+        });
     app.nav.insert(View::Bands, nav);
     zoom_bar(app, ui, Some(readout));
     after_zoomable(app, outcome, true);
@@ -782,13 +1016,23 @@ fn bands_view(app: &mut GuiApp, ui: &mut Ui) {
 
 fn fft_view(app: &mut GuiApp, ui: &mut Ui) {
     let serial = app.result_serial;
-    let Some((_, ViewResult::Fft(r))) = app.results.get(&View::Fft) else { return };
+    let Some((_, ViewResult::Fft(r))) = app.results.get(&View::Fft) else {
+        return;
+    };
     title(ui, &r.meta.title);
     let mut nav = app.nav.remove(&View::Fft).unwrap_or_default();
     let fit = std::mem::take(&mut nav.fit);
-    let curves: Vec<(Option<&str>, &[f64], &[f64])> =
-        r.curves.iter().map(|c| (c.label.as_deref(), c.x.as_slice(), c.y.as_slice())).collect();
-    let x1 = r.meta.fmax.unwrap_or_else(|| r.curves.first().and_then(|c| c.x.last().copied()).unwrap_or(r.meta.nyquist));
+    let curves: Vec<(Option<&str>, &[f64], &[f64])> = r
+        .curves
+        .iter()
+        .map(|c| (c.label.as_deref(), c.x.as_slice(), c.y.as_slice()))
+        .collect();
+    let x1 = r.meta.fmax.unwrap_or_else(|| {
+        r.curves
+            .first()
+            .and_then(|c| c.x.last().copied())
+            .unwrap_or(r.meta.nyquist)
+    });
     let fit_bounds = fit.then(|| {
         let xy: Vec<(&[f64], &[f64])> = curves.iter().map(|c| (c.1, c.2)).collect();
         plots::fit_curves(&xy, 0.0, x1, false)
@@ -796,7 +1040,10 @@ fn fft_view(app: &mut GuiApp, ui: &mut Ui) {
     let size = ui.available_size() - vec2(0.0, 6.0);
     LinePlot {
         id: format!("fft-{serial}"),
-        x_label: format!("Frequency (Hz)   --   Nyquist = {} Hz", fmt_g(r.meta.nyquist.round(), 10)),
+        x_label: format!(
+            "Frequency (Hz)   --   Nyquist = {} Hz",
+            fmt_g(r.meta.nyquist.round(), 10)
+        ),
         y_label: r.meta.y_label.clone(),
         curves,
         fit_bounds,
@@ -808,12 +1055,23 @@ fn fft_view(app: &mut GuiApp, ui: &mut Ui) {
 }
 
 fn trace_view(app: &mut GuiApp, ui: &mut Ui) {
-    let Some((_, ViewResult::Trace(r))) = app.results.get(&View::Trace) else { return };
+    let Some((_, ViewResult::Trace(r))) = app.results.get(&View::Trace) else {
+        return;
+    };
     title(ui, &r.meta.title);
     let mut nav = app.nav.remove(&View::Trace).unwrap_or_default();
     let fit = std::mem::take(&mut nav.fit);
     let size = ui.available_size() - vec2(0.0, 30.0);
-    let outcome = plots::trace(ui, &r.times, &r.lo, &r.hi, &r.meta.label, &mut nav, fit, size);
+    let outcome = plots::trace(
+        ui,
+        &r.times,
+        &r.lo,
+        &r.hi,
+        &r.meta.label,
+        &mut nav,
+        fit,
+        size,
+    );
     let points = format!("{} points", group(r.times.len() as u64));
     app.nav.insert(View::Trace, nav);
     zoom_bar(app, ui, Some(points));
@@ -822,7 +1080,9 @@ fn trace_view(app: &mut GuiApp, ui: &mut Ui) {
 
 fn inspect_view(app: &mut GuiApp, ui: &mut Ui) {
     let serial = app.result_serial;
-    let Some((_, ViewResult::Inspect(r))) = app.results.get(&View::Inspect) else { return };
+    let Some((_, ViewResult::Inspect(r))) = app.results.get(&View::Inspect) else {
+        return;
+    };
     title(ui, &r.meta.title);
     let mut nav = app.nav.remove(&View::Inspect).unwrap_or_default();
     let fit = std::mem::take(&mut nav.fit);
@@ -831,7 +1091,10 @@ fn inspect_view(app: &mut GuiApp, ui: &mut Ui) {
     ui.horizontal(|ui| {
         let wave_size = vec2((avail.x - 200.0).max(200.0), half);
         let fit_wave = fit.then(|| {
-            let (t0, t1) = (r.times.first().copied().unwrap_or(0.0), r.times.last().copied().unwrap_or(1.0));
+            let (t0, t1) = (
+                r.times.first().copied().unwrap_or(0.0),
+                r.times.last().copied().unwrap_or(1.0),
+            );
             match r.meta.ylim {
                 [Some(lo), Some(hi)] => [t0, lo, t1, hi],
                 _ => plots::fit_curves(&[(&r.times, &r.waveform)], t0, t1, false),
@@ -854,8 +1117,9 @@ fn inspect_view(app: &mut GuiApp, ui: &mut Ui) {
     });
     // The spectrum over f > 0 (and <= fmax), its dominant peak marked, as the CLI draws it.
     let fmax = r.meta.fmax;
-    let keep: Vec<usize> =
-        (0..r.freqs.len()).filter(|&i| r.freqs[i] > 0.0 && fmax.is_none_or(|m| r.freqs[i] <= m)).collect();
+    let keep: Vec<usize> = (0..r.freqs.len())
+        .filter(|&i| r.freqs[i] > 0.0 && fmax.is_none_or(|m| r.freqs[i] <= m))
+        .collect();
     if keep.is_empty() {
         ui.label("FFT unavailable: signal too short");
     } else {
@@ -863,7 +1127,8 @@ fn inspect_view(app: &mut GuiApp, ui: &mut Ui) {
         let fy: Vec<f64> = keep.iter().map(|&i| r.magnitude[i]).collect();
         let peak = (0..fy.len()).fold(0, |best, i| if fy[i] > fy[best] { i } else { best });
         let log = r.meta.fft_log;
-        let fit_fft = fit.then(|| plots::fit_curves(&[(&fx, &fy)], fx[0], *fx.last().unwrap(), log));
+        let fit_fft =
+            fit.then(|| plots::fit_curves(&[(&fx, &fy)], fx[0], *fx.last().unwrap(), log));
         let label = r.meta.fft_y_label.clone();
         LinePlot {
             id: format!("inspect-fft-{serial}"),
@@ -872,7 +1137,11 @@ fn inspect_view(app: &mut GuiApp, ui: &mut Ui) {
             curves: vec![(None, &fx, &fy)],
             fit_bounds: fit_fft,
             log_y: log,
-            marker: Some((fx[peak], fy[peak], format!("{} Hz", fmt_g((fx[peak] * 100.0).round() / 100.0, 8)))),
+            marker: Some((
+                fx[peak],
+                fy[peak],
+                format!("{} Hz", fmt_g((fx[peak] * 100.0).round() / 100.0, 8)),
+            )),
         }
         .show(ui, vec2(avail.x, half));
     }
@@ -889,24 +1158,51 @@ fn scope_view(app: &mut GuiApp, ui: &mut Ui) {
     title(ui, &meta.title);
     ui.horizontal(|ui| {
         let playing = player.playing;
-        if ui.button(if playing { "⏸ Pause" } else { "▶ Play" }).clicked() {
+        if ui
+            .button(if playing { "⏸ Pause" } else { "▶ Play" })
+            .clicked()
+        {
             player.set_playing(!playing, now);
         }
         ui.label("Speed");
         let mut speed = player.speed;
-        if ui.add(egui::DragValue::new(&mut speed).speed(0.01).range(0.0001..=1000.0).max_decimals(4)).changed() {
+        if ui
+            .add(
+                egui::DragValue::new(&mut speed)
+                    .speed(0.01)
+                    .range(0.0001..=1000.0)
+                    .max_decimals(4),
+            )
+            .changed()
+        {
             player.set_speed(speed, now);
         }
         ui.label("fps");
         let mut fps = player.fps;
-        if ui.add(egui::DragValue::new(&mut fps).speed(1.0).range(1.0..=240.0).max_decimals(0)).changed() {
+        if ui
+            .add(
+                egui::DragValue::new(&mut fps)
+                    .speed(1.0)
+                    .range(1.0..=240.0)
+                    .max_decimals(0),
+            )
+            .changed()
+        {
             player.fps = fps;
         }
         ui.separator();
         let n = meta.n_window.max(1);
-        let mut local = if player.playing { player.frame.local } else { player.paused_local };
+        let mut local = if player.playing {
+            player.frame.local
+        } else {
+            player.paused_local
+        };
         let slider = egui::Slider::new(&mut local, 0..=n - 1).text("line in the loop");
-        if ui.add_enabled(!player.playing, slider).on_disabled_hover_text("Pause to choose a line").changed() {
+        if ui
+            .add_enabled(!player.playing, slider)
+            .on_disabled_hover_text("Pause to choose a line")
+            .changed()
+        {
             player.paused_local = local;
         }
     });
@@ -993,23 +1289,34 @@ fn settings_window(app: &mut GuiApp, ctx: &egui::Context) {
 fn log_window(app: &mut GuiApp, ctx: &egui::Context) {
     let mut open = app.show_log;
     let lines = app.stderr_tail(400);
-    egui::Window::new("Worker log").open(&mut open).default_size([700.0, 400.0]).show(ctx, |ui| {
-        ui.label(RichText::new(app.worker_command()).weak());
-        ScrollArea::vertical().stick_to_bottom(true).auto_shrink([false, false]).show(ui, |ui| {
-            if lines.is_empty() {
-                ui.label(RichText::new("(nothing written to stderr)").weak());
-            }
-            for l in &lines {
-                ui.monospace(l);
-            }
+    egui::Window::new("Worker log")
+        .open(&mut open)
+        .default_size([700.0, 400.0])
+        .show(ctx, |ui| {
+            ui.label(RichText::new(app.worker_command()).weak());
+            ScrollArea::vertical()
+                .stick_to_bottom(true)
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    if lines.is_empty() {
+                        ui.label(RichText::new("(nothing written to stderr)").weak());
+                    }
+                    for l in &lines {
+                        ui.monospace(l);
+                    }
+                });
         });
-    });
     app.show_log = open;
 }
 
 fn dropped_files(app: &mut GuiApp, ctx: &egui::Context) {
     let dropped: Vec<String> = ctx.input(|i| {
-        i.raw.dropped_files.iter().map(|f| f.path().display().to_string()).filter(|p| !p.is_empty()).collect()
+        i.raw
+            .dropped_files
+            .iter()
+            .map(|f| f.path().display().to_string())
+            .filter(|p| !p.is_empty())
+            .collect()
     });
     if let Some(path) = dropped.into_iter().next() {
         app.open_file(path);

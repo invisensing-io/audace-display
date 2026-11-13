@@ -102,10 +102,10 @@ or Vulkan, whichever the machine has.
   *CLI defaults* puts every option back. A changed option is shown in bold.
   The view is recomputed a moment after the last change (turn this off in
   Settings for very large files, then press *Render*).
-- **Waterfalls**: time runs downwards, distance left to right. Scroll to
-  zoom, drag to pan, drag with the right button to zoom into a box,
-  double-click to come back: the worker recomputes the decimated window you
-  are looking at (more detail when zoomed in). The colour bar carries the
+- **Waterfalls**: time runs downwards, distance left to right. Ctrl+scroll
+  (or a pinch) zooms, a drag with the right button zooms into a box, a drag
+  or a scroll pans, a double-click comes back: the worker recomputes the
+  decimated window you are looking at (more detail when zoomed in). The colour bar carries the
   quantity and its unit; the value under the pointer is shown next to it.
 - **Time trace**: zooming the time axis recomputes the trace over that window.
 - **Oscilloscope**: plays the lines at the actual pulse rate times the speed,
@@ -130,14 +130,29 @@ saved in `%APPDATA%\audace-display-gui\settings.json` on Windows and
 ### Command line
 
 ```text
-audace-display-gui [FILE] [--python CMD] [--view VIEW] [--set DEST=VALUE]... [--screenshot OUT.png]
+audace-display-gui [FILE] [--python CMD] [--view VIEW] [--unit UNIT]
+                   [--set DEST=VALUE]... [--zoom T0:T1[:D0:D1]] [--screenshot OUT.png]
 ```
 
 `--python` overrides the saved interpreter for one run; `--view` is one of
 `info`, `heatmap`, `bandheatmaps`, `fft`, `trace`, `scope`, `inspect`;
-`--set` gives an option of that view by its CLI name (`--set f1=50`,
-`--set db=true`); `--screenshot` saves the window once the view is drawn,
-then quits.
+`--unit` is `rad`, `nanostrain` or `strain_rate`; `--set` gives an option
+of that view by its CLI name (`--set f1=50`, `--set db=true`); `--zoom`
+opens a waterfall (or a trace) on seconds `T0..T1` (and metres `D0..D1`);
+`--screenshot` saves the window once the view is drawn, then quits.
+
+To look at the viewer on a machine without a display (or to keep it off a
+GPU), run it on a virtual display with Mesa's software Vulkan driver:
+
+```bash
+WGPU_BACKEND=vulkan WGPU_FORCE_FALLBACK_ADAPTER=1 \
+VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.json VK_LOADER_LAYERS_DISABLE='~implicit~' \
+xvfb-run -a -s "-screen 0 1600x1000x24" \
+  ./target/release/audace-display-gui phase.h5 --view heatmap --screenshot heatmap.png
+```
+
+The log line `AdapterInfo { name: "llvmpipe ...", device_type: Cpu, ... }`
+confirms the CPU renderer.
 
 ## What is not in the viewer
 

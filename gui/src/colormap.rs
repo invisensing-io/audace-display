@@ -20,12 +20,30 @@ pub struct Colormap {
 
 impl Colormap {
     /// From the worker's `(N, 4)` uint8 table and its special colours.
-    pub fn new(name: &str, lut_bytes: &[u8], under: [u8; 4], over: [u8; 4], bad: [u8; 4]) -> Result<Self, String> {
+    pub fn new(
+        name: &str,
+        lut_bytes: &[u8],
+        under: [u8; 4],
+        over: [u8; 4],
+        bad: [u8; 4],
+    ) -> Result<Self, String> {
         if lut_bytes.is_empty() || !lut_bytes.len().is_multiple_of(4) {
-            return Err(format!("colormap '{name}': a lookup table of {} bytes", lut_bytes.len()));
+            return Err(format!(
+                "colormap '{name}': a lookup table of {} bytes",
+                lut_bytes.len()
+            ));
         }
-        let lut = lut_bytes.chunks_exact(4).map(|c| [c[0], c[1], c[2], c[3]]).collect();
-        Ok(Colormap { name: name.to_string(), lut, under, over, bad })
+        let lut = lut_bytes
+            .chunks_exact(4)
+            .map(|c| [c[0], c[1], c[2], c[3]])
+            .collect();
+        Ok(Colormap {
+            name: name.to_string(),
+            lut,
+            under,
+            over,
+            bad,
+        })
     }
 
     pub fn len(&self) -> usize {
@@ -74,7 +92,10 @@ pub struct Norm {
 
 impl Norm {
     pub fn new(vmin: f64, vmax: f64) -> Norm {
-        Norm { vmin: vmin as f32, span: (vmax - vmin) as f32 }
+        Norm {
+            vmin: vmin as f32,
+            span: (vmax - vmin) as f32,
+        }
     }
 
     /// `v` on the unit scale (0 at `vmin`, 1 at `vmax`); 0 everywhere when
@@ -92,7 +113,9 @@ mod tests {
     use super::*;
 
     fn gray(n: usize) -> Colormap {
-        let lut: Vec<u8> = (0..n).flat_map(|i| [i as u8, i as u8, i as u8, 255]).collect();
+        let lut: Vec<u8> = (0..n)
+            .flat_map(|i| [i as u8, i as u8, i as u8, 255])
+            .collect();
         Colormap::new("gray", &lut, [1, 2, 3, 255], [4, 5, 6, 255], [0, 0, 0, 0]).unwrap()
     }
 
@@ -101,7 +124,11 @@ mod tests {
         let c = gray(256);
         let norm = Norm::new(-1.0, 1.0);
         assert_eq!(c.rgba(-1.0, &norm)[0], 0);
-        assert_eq!(c.rgba(1.0, &norm)[0], 255, "x == 1 is the last entry, not over");
+        assert_eq!(
+            c.rgba(1.0, &norm)[0],
+            255,
+            "x == 1 is the last entry, not over"
+        );
         assert_eq!(c.rgba(0.0, &norm)[0], 128);
     }
 
@@ -121,7 +148,18 @@ mod tests {
         let c = gray(4);
         let norm = Norm::new(0.0, 1.0);
         let idx = |v: f32| c.rgba(v, &norm)[0];
-        assert_eq!([idx(0.0), idx(0.2499), idx(0.25), idx(0.5), idx(0.7499), idx(0.75), idx(1.0)], [0, 0, 1, 2, 2, 3, 3]);
+        assert_eq!(
+            [
+                idx(0.0),
+                idx(0.2499),
+                idx(0.25),
+                idx(0.5),
+                idx(0.7499),
+                idx(0.75),
+                idx(1.0)
+            ],
+            [0, 0, 1, 2, 2, 3, 3]
+        );
     }
 
     #[test]
