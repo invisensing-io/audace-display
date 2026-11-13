@@ -9,9 +9,8 @@ Requires `invisensing >= 1.6.0` (publish it to PyPI first).
   `inspect`), the file is opened with invisensing's
   `phase_unit="nanostrain"`: `phase / gauge_length_m x
   NANOSTRAIN_PER_RAD_METRE`, with the gauge length the file records
-  (Audace-Lib, since 2026-11) and invisensing's constant (115 nm/m per
-  rad/m, provisional: fixed in invisensing before the release that
-  publishes the option). The labels read `strain (nm/m)`, `Var[strain]
+  (Audace-Lib, since 2026-11) and invisensing's constant (110.37 nm/m
+  per rad/m). The labels read `strain (nm/m)`, `Var[strain]
   (nm/m)^2` / `log10 Var[strain] (nm/m)^2` with `--variance`,
   `RMS[strain] (nm/m)` per band, `strain (dB, ref=... nm/m)` with `--db`,
   `Amplitude (nm/m)` for a spectrum, in matplotlib and in the pyqtgraph

@@ -26,7 +26,7 @@ except Exception:  # pragma: no cover - version is informational only
     __version__ = "0"
 
 try:
-    # nm/m per rad/m: invisensing's constant (provisional), never copied here.
+    # nm/m per rad/m: invisensing's constant, never copied here.
     from invisensing import NANOSTRAIN_PER_RAD_METRE as _K_NANOSTRAIN
 except ImportError:  # invisensing < 1.6.0: --nanostrain then says what to install
     _K_NANOSTRAIN = None
@@ -342,7 +342,7 @@ def do_info(f, args) -> int:
     if reads_strain(f):
         print(
             f"  Strain         : {STRAIN_UNIT} = rad x {f.nanostrain_per_rad:.6g} "
-            f"(= {_K_NANOSTRAIN:g} / {gauge:g} m; the constant is provisional)"
+            f"(= {_K_NANOSTRAIN:g} / {gauge:g} m)"
         )
     print(f"  Timestamp      : {_format_timestamp(f)}")
     if f.num_lines > 1:
@@ -986,7 +986,7 @@ def _add_unit(p: argparse.ArgumentParser) -> None:
     k = "NANOSTRAIN_PER_RAD_METRE" if _K_NANOSTRAIN is None else f"{_K_NANOSTRAIN:g}"
     p.add_argument("--nanostrain", action="store_true",
                    help=f"Show a phase as strain, in nm/m: phase / gauge length x {k} "
-                        "(invisensing's constant, provisional), with the gauge length "
+                        "(invisensing's constant), with the gauge length "
                         "the file records. Refused for a file that holds no phase or "
                         "does not record its gauge length.")
 
@@ -1089,7 +1089,7 @@ Channels available per file mode:
 
 --nanostrain (every view but demod): a phase is shown as strain, in nm/m,
   phase / gauge_length_m x NANOSTRAIN_PER_RAD_METRE (invisensing's constant,
-  provisional), with the gauge length the file records (invisensing >= 1.6.0).
+  110.37), with the gauge length the file records (invisensing >= 1.6.0).
   A file that holds no phase, or a phase without its gauge length, is refused.
 
 Large files (200 MB - 10 GB): streamed, decimated reading, bounded RAM.

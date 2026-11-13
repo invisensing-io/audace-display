@@ -264,9 +264,8 @@ audace-display scope phase.h5 --nanostrain --line 100 --save line.png
 audace-display info phase.h5 --nanostrain
 ```
 
-- `NANOSTRAIN_PER_RAD_METRE` is invisensing's constant (115 nm/m per rad/m)
-  and is **provisional**: its final value is fixed in invisensing before the
-  release that publishes the option.
+- `NANOSTRAIN_PER_RAD_METRE` is invisensing's constant: 110.37 nm/m per
+  rad/m, from `ΔΦ = 2β(n + Cε)·ε·L` at λ = 1550.12 nm and n = 1.46.
 - The gauge length is the one the file records (`info` prints it: `Gauge
   length : 9.6 m`), the gauge the producer applied, recorded on a phase
   since 2026-11.
