@@ -1,0 +1,5 @@
+# The desktop viewer (a Rust crate) is built on its own; it is not part of
+# the Python package. Its Python side, audace_display.gui_worker, is.
+prune gui
+# Agent worktrees and scratch, never shipped.
+prune .claude

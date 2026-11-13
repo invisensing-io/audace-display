@@ -20,3 +20,8 @@ venv/
 /plugins/
 
 arctan_unwrapping_dui_location_phase_visualize_test.py
+# Local Claude Code state and worktrees.
+/.claude/
+
+# The desktop viewer's build output.
+/gui/target/
