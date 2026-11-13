@@ -9,7 +9,9 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod app;
+mod cli_text;
 mod colormap;
+mod i18n;
 mod params;
 mod plots;
 mod protocol;
@@ -22,17 +24,22 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use bevy::prelude::*;
-use bevy::render::view::screenshot::{Screenshot, save_to_disk};
+use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured, save_to_disk};
 use bevy::window::WindowResolution;
 use bevy::winit::{EventLoopProxyWrapper, UpdateMode, WinitSettings, WinitUserEvent};
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass};
 
 use crate::app::{GuiApp, StartupArgs};
+use crate::i18n::Text;
 use crate::settings::Settings;
 
 /// Startup values handed to the setup system.
 #[derive(Resource)]
-struct Boot(Mutex<Option<(Settings, Option<String>, StartupArgs)>>);
+struct Boot(Mutex<Option<(Settings, Option<Text>, StartupArgs)>>);
+
+/// `--screenshot`: set once the image is written (or could not be).
+#[derive(Resource, Default)]
+struct ScreenshotSaved(bool);
 
 fn main() {
     let startup = match StartupArgs::parse(std::env::args().skip(1)) {
@@ -64,6 +71,7 @@ fn main() {
             unfocused_mode: UpdateMode::reactive_low_power(Duration::from_secs(5)),
         })
         .insert_resource(Boot(Mutex::new(Some((settings, warning, startup)))))
+        .init_resource::<ScreenshotSaved>()
         .add_systems(Startup, setup)
         .add_systems(EguiPrimaryContextPass, ui_system)
         .add_systems(Update, screenshot_system)
@@ -108,9 +116,13 @@ fn ui_system(mut contexts: EguiContexts, gui: Option<ResMut<GuiApp>>) -> Result 
 }
 
 /// `--screenshot`: once the requested view is drawn, save the window and quit.
+/// The app quits once the capture has come back from the GPU and is written
+/// (not when a file of that name exists: an older one may), so the capture
+/// is never cut off by the exit.
 fn screenshot_system(
     mut commands: Commands,
     gui: Option<ResMut<GuiApp>>,
+    saved: Res<ScreenshotSaved>,
     mut exit: MessageWriter<AppExit>,
     mut stage: Local<Option<(u32, std::path::PathBuf)>>,
 ) {
@@ -128,17 +140,21 @@ fn screenshot_system(
             // A few frames for the layout and the textures to settle.
             if gui.ready_frames >= 10 {
                 info!("saving the window to {}", path.display());
-                commands
-                    .spawn(Screenshot::primary_window())
-                    .observe(save_to_disk(path.clone()));
+                let mut save = save_to_disk(path.clone());
+                commands.spawn(Screenshot::primary_window()).observe(
+                    move |captured: On<ScreenshotCaptured>, mut saved: ResMut<ScreenshotSaved>| {
+                        save(captured);
+                        saved.0 = true;
+                    },
+                );
                 *stage = Some((0, path));
             }
         }
         Some((frames, path)) => {
             *frames += 1;
-            if path.exists() || *frames > 600 {
-                if !path.exists() {
-                    error!("the screenshot was not written");
+            if saved.0 || *frames > 600 {
+                if !saved.0 {
+                    error!("the screenshot of {} was not captured", path.display());
                 }
                 exit.write(AppExit::Success);
             }

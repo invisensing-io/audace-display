@@ -4,10 +4,11 @@
 use bevy_egui::egui::{self, Color32, ColorImage, TextureHandle, TextureOptions};
 
 use crate::colormap::{Colormap, Norm};
+use crate::i18n::WorkerText;
 use crate::params::View;
 use crate::protocol::{
     Array, ArrayData, BandsMeta, ColormapMeta, FftMeta, HeatmapMeta, InfoMeta, InspectMeta,
-    Message, ProtocolError, ScopeMeta, TraceMeta,
+    Message, ProtocolError, ScopeMeta, TraceMeta, warning_texts,
 };
 
 /// Largest texture side used: an image above it is split into tiles (GPUs
@@ -234,7 +235,7 @@ pub fn decode(
     view: View,
     mut msg: Message,
     ctx: &egui::Context,
-) -> Result<(ViewResult, Vec<String>), String> {
+) -> Result<(ViewResult, Vec<WorkerText>), String> {
     let kind = msg.kind().to_string();
     if kind != view.cli_name() {
         return Err(format!(
@@ -245,7 +246,8 @@ pub fn decode(
     Ok(match view {
         View::Info => {
             let m: InfoMeta = msg.parse().map_err(err)?;
-            (ViewResult::Info(m.text), m.warnings)
+            let warnings = warning_texts(&m.warnings, &m.warning_codes);
+            (ViewResult::Info(m.text), warnings)
         }
         View::Heatmap => {
             let m: HeatmapMeta = msg.parse().map_err(err)?;
@@ -262,7 +264,10 @@ pub fn decode(
                 (m.vmin, m.vmax),
                 &m.colormap,
             )?;
-            (ViewResult::Heatmap(img), m.warnings)
+            (
+                ViewResult::Heatmap(img),
+                warning_texts(&m.warnings, &m.warning_codes),
+            )
         }
         View::Bands => {
             let m: BandsMeta = msg.parse().map_err(err)?;
@@ -282,12 +287,13 @@ pub fn decode(
                     &p.colormap,
                 )?);
             }
+            let warnings = warning_texts(&m.warnings, &m.warning_codes);
             (
                 ViewResult::Bands {
                     title: m.title,
                     panels,
                 },
-                m.warnings,
+                warnings,
             )
         }
         View::Fft => {
@@ -301,7 +307,7 @@ pub fn decode(
                     y: take_f64(&mut msg, &format!("curve{i}"))?,
                 });
             }
-            let warnings = m.warnings.clone();
+            let warnings = warning_texts(&m.warnings, &m.warning_codes);
             (ViewResult::Fft(FftResult { meta: m, curves }), warnings)
         }
         View::Trace => {
@@ -312,7 +318,7 @@ pub fn decode(
                 hi: take_f64(&mut msg, "hi")?,
                 meta: m,
             };
-            let warnings = r.meta.warnings.clone();
+            let warnings = warning_texts(&r.meta.warnings, &r.meta.warning_codes);
             (ViewResult::Trace(r), warnings)
         }
         View::Inspect => {
@@ -324,13 +330,13 @@ pub fn decode(
                 magnitude: take_f64(&mut msg, "magnitude")?,
                 meta: m,
             };
-            let warnings = r.meta.warnings.clone();
+            let warnings = warning_texts(&r.meta.warnings, &r.meta.warning_codes);
             (ViewResult::Inspect(r), warnings)
         }
         View::Scope => {
             let m: ScopeMeta = msg.parse().map_err(err)?;
             let first = decode_frame(&mut msg, m.frame.local, m.frame.line, m.frame.t)?;
-            let warnings = m.warnings.clone();
+            let warnings = warning_texts(&m.warnings, &m.warning_codes);
             (ViewResult::Scope(ScopeResult { meta: m, first }), warnings)
         }
     })

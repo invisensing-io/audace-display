@@ -12,6 +12,7 @@ use bevy::prelude::Resource;
 use bevy_egui::egui;
 use serde_json::{Map, Value, json};
 
+use crate::i18n::{Lang, Msg, Text, WorkerText};
 use crate::params::{self, View, ViewOptions, Window};
 use crate::protocol::{self, FileDescription, Hello, Message, Progress, WorkerError};
 use crate::settings::{self, Settings};
@@ -37,6 +38,10 @@ pub struct StartupArgs {
     pub sets: Vec<(String, String)>,
     pub unit: Option<String>,
     pub zoom: Option<Window>,
+    /// The language of this run (not saved).
+    pub lang: Option<Lang>,
+    /// Open the Settings window at start.
+    pub settings: bool,
 }
 
 impl StartupArgs {
@@ -54,6 +59,13 @@ impl StartupArgs {
                 }
                 "--screenshot" => out.screenshot = Some(PathBuf::from(value("--screenshot")?)),
                 "--unit" => out.unit = Some(value("--unit")?),
+                "--lang" => {
+                    let l = value("--lang")?;
+                    out.lang = Some(
+                        Lang::parse(&l).ok_or_else(|| format!("--lang is en or fr, got '{l}'"))?,
+                    );
+                }
+                "--settings" => out.settings = true,
                 "--zoom" => {
                     let z = value("--zoom")?;
                     out.zoom =
@@ -80,14 +92,18 @@ impl StartupArgs {
         Ok(out)
     }
 
-    pub const USAGE: &'static str = "usage: audace-display-gui [FILE] [--python CMD] [--view VIEW] \
-[--unit UNIT] [--set DEST=VALUE]... [--zoom T0:T1[:D0:D1]] [--screenshot OUT.png]\n\
+    pub const USAGE: &'static str = "usage: audace-display-gui [FILE] [--python CMD] [--lang en|fr] \
+[--view VIEW] [--unit UNIT] [--set DEST=VALUE]... [--zoom T0:T1[:D0:D1]] [--settings] \
+[--screenshot OUT.png]\n\
   FILE            a recording to open (.dat / .h5 / .hdf5 / .tdms / .sgy)\n\
   --python CMD    the Python interpreter for this run (default: the saved setting)\n\
+  --lang en|fr    the language of the window for this run (default: the saved setting,\n\
+                  else the system's: French when its locale starts with fr)\n\
   --view VIEW     info, heatmap, bandheatmaps, fft, trace, scope or inspect\n\
   --unit UNIT     rad, nanostrain or strain_rate (when the file allows it)\n\
   --set DEST=V    an option of the view, by its CLI name (max_time_bins=500)\n\
   --zoom T0:T1[:D0:D1]  open the view zoomed on seconds T0..T1 (and metres D0..D1)\n\
+  --settings      open the Settings window at start\n\
   --screenshot P  save the window to P once the view is drawn, then quit";
 }
 
@@ -119,7 +135,7 @@ pub enum WorkerState {
     Stopped,
     Starting { since: Instant },
     Ready,
-    Failed(String),
+    Failed(Text),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -132,7 +148,7 @@ pub enum Level {
 #[derive(Debug, Clone)]
 pub struct Notice {
     pub level: Level,
-    pub text: String,
+    pub text: Text,
 }
 
 enum Inflight {
@@ -231,6 +247,10 @@ impl ScopePlayer {
 
 #[derive(Resource)]
 pub struct GuiApp {
+    /// The language of the window now.
+    pub lang: Lang,
+    /// The language of the system's locale.
+    pub system_lang: Lang,
     pub settings: Settings,
     settings_path: Option<PathBuf>,
     pub startup: StartupArgs,
@@ -254,7 +274,7 @@ pub struct GuiApp {
 
     pub results: BTreeMap<View, (String, ViewResult)>,
     pub errors: BTreeMap<View, (String, WorkerError)>,
-    pub warnings: Vec<String>,
+    pub warnings: Vec<WorkerText>,
     pub zoom: BTreeMap<View, Window>,
     pub nav: BTreeMap<View, PlotNav>,
     pub progress: Option<Progress>,
@@ -277,7 +297,7 @@ pub struct GuiApp {
 impl GuiApp {
     pub fn new(
         settings: Settings,
-        settings_warning: Option<String>,
+        settings_warning: Option<Text>,
         startup: StartupArgs,
         waker: Waker,
     ) -> GuiApp {
@@ -289,10 +309,14 @@ impl GuiApp {
         if let Some(w) = settings_warning {
             notices.push(Notice {
                 level: Level::Warning,
-                text: format!("Settings: {w}"),
+                text: w,
             });
         }
+        let system_lang = Lang::system();
         GuiApp {
+            lang: startup.lang.or(settings.language).unwrap_or(system_lang),
+            system_lang,
+            show_settings: startup.settings,
             interpreter_input: settings.interpreter.clone(),
             path_input: startup.file.clone().unwrap_or_default(),
             settings,
@@ -324,13 +348,12 @@ impl GuiApp {
             scope: None,
             notices,
             dialog: None,
-            show_settings: false,
             show_log: false,
             ready_frames: 0,
         }
     }
 
-    pub fn notify(&mut self, level: Level, text: impl Into<String>) {
+    pub fn notify(&mut self, level: Level, text: impl Into<Text>) {
         let text = text.into();
         if !self.notices.iter().any(|n| n.text == text) {
             self.notices.push(Notice { level, text });
@@ -339,8 +362,19 @@ impl GuiApp {
 
     pub fn save_settings(&mut self) {
         if let Err(e) = self.settings.save_to(self.settings_path.as_deref()) {
-            self.notify(Level::Warning, format!("The settings were not saved: {e}"));
+            self.notify(
+                Level::Warning,
+                Text::from(Msg::SettingsNotSaved).arg("error", e),
+            );
         }
+    }
+
+    /// The language chosen in Settings (`None`: the system's), at once and
+    /// for the next runs.
+    pub fn set_language(&mut self, language: Option<Lang>) {
+        self.settings.language = language;
+        self.lang = language.unwrap_or(self.system_lang);
+        self.save_settings();
     }
 
     // --- The worker ------------------------------------------------------------
@@ -381,11 +415,11 @@ impl GuiApp {
                     Err(e) => self.worker_failed(e),
                 }
             }
-            Err(e) => self.worker_failed(format!("{e}\n\n{}", install_hint(&self.interpreter))),
+            Err(e) => self.worker_failed(e.then(install_hint(&self.interpreter))),
         }
     }
 
-    fn worker_failed(&mut self, why: String) {
+    fn worker_failed(&mut self, why: Text) {
         self.worker = None;
         self.inflight.clear();
         self.current_render = None;
@@ -437,7 +471,7 @@ impl GuiApp {
                 self.worker_failed(if tail.is_empty() {
                     e
                 } else {
-                    format!("{e}:\n{tail}")
+                    e.with_detail(tail)
                 });
                 None
             }
@@ -452,7 +486,7 @@ impl GuiApp {
                 WorkerEvent::Message(m) => self.on_message(m, now),
                 WorkerEvent::Stopped(why) => {
                     let why = if matches!(self.worker_state, WorkerState::Starting { .. }) {
-                        format!("{why}\n\n{}", install_hint(&self.interpreter))
+                        why.then(install_hint(&self.interpreter))
                     } else {
                         why
                     };
@@ -463,11 +497,11 @@ impl GuiApp {
         if let WorkerState::Starting { since } = self.worker_state
             && now.duration_since(since) > HELLO_TIMEOUT
         {
-            self.worker_failed(format!(
-                "`{}` did not answer within {} s.",
-                self.worker_command(),
-                HELLO_TIMEOUT.as_secs()
-            ));
+            self.worker_failed(
+                Text::from(Msg::HelloTimeout)
+                    .arg("command", self.worker_command())
+                    .arg("seconds", HELLO_TIMEOUT.as_secs().to_string()),
+            );
         }
         self.check_cancel_grace(now);
         self.poll_dialog();
@@ -480,10 +514,7 @@ impl GuiApp {
             matches!(w, Inflight::Render { cancelled_at: Some(t), .. } if now.duration_since(*t) > CANCEL_GRACE)
         });
         if stuck {
-            self.notify(
-                Level::Info,
-                "A cancelled computation did not stop: the worker was restarted.",
-            );
+            self.notify(Level::Info, Msg::CancelStuck);
             self.start_worker();
         }
     }
@@ -492,8 +523,13 @@ impl GuiApp {
         let Some(id) = msg.id() else {
             if msg.kind() == "error" {
                 let e: Result<WorkerError, _> = msg.parse();
-                let text = e.map(|e| e.message).unwrap_or_else(|e| e.to_string());
-                self.notify(Level::Error, format!("Worker: {text}"));
+                let text = e
+                    .map(|e| Text::Worker(e.text()))
+                    .unwrap_or_else(|e| e.text());
+                self.notify(
+                    Level::Error,
+                    Text::from(Msg::WorkerSays).arg("message", text),
+                );
             }
             return;
         };
@@ -509,37 +545,42 @@ impl GuiApp {
             return;
         };
         let error: Option<WorkerError> = (msg.kind() == "error").then(|| {
-            msg.parse().unwrap_or_else(|e| WorkerError {
-                kind: "protocol".into(),
-                message: e.to_string(),
-            })
+            msg.parse()
+                .unwrap_or_else(|e| WorkerError::new("protocol", e.to_string()))
         });
         match what {
             Inflight::Hello => match error {
-                Some(e) => self.worker_failed(e.message),
+                Some(e) => self.worker_failed(Text::Worker(e.text())),
                 None => match msg.parse::<Hello>() {
                     Ok(h) if h.protocol == protocol::PROTOCOL => self.on_hello(h),
-                    Ok(h) => self.worker_failed(format!(
-                        "audace-display {} speaks protocol {}, this viewer protocol {}: install the \
-                         audace-display that matches the viewer.",
-                        h.audace_display,
-                        h.protocol,
-                        protocol::PROTOCOL
-                    )),
-                    Err(e) => self.worker_failed(e.to_string()),
+                    Ok(h) => self.worker_failed(
+                        Text::from(Msg::ProtocolMismatch)
+                            .arg("version", h.audace_display.as_str())
+                            .arg("worker", h.protocol.to_string())
+                            .arg("viewer", protocol::PROTOCOL.to_string()),
+                    ),
+                    Err(e) => self.worker_failed(e.text()),
                 },
             },
             Inflight::Open => {
                 self.opening = None;
                 match error {
-                    Some(e) => self.notify(Level::Error, format!("Cannot open the file: {}", e.message)),
+                    Some(e) => self.notify(
+                        Level::Error,
+                        Text::from(Msg::CannotOpen).arg("reason", Text::Worker(e.text())),
+                    ),
                     None => match msg.parse::<FileDescription>() {
                         Ok(desc) => self.on_file(desc),
-                        Err(e) => self.notify(Level::Error, e.to_string()),
+                        Err(e) => self.notify(Level::Error, e.text()),
                     },
                 }
             }
-            Inflight::Render { view, key, superseded, .. } => {
+            Inflight::Render {
+                view,
+                key,
+                superseded,
+                ..
+            } => {
                 if Some(id) == self.current_render {
                     self.current_render = None;
                     self.progress = None;
@@ -555,13 +596,16 @@ impl GuiApp {
                     None => match views::decode(view, msg, &self.ctx) {
                         Ok((result, warnings)) => self.on_result(view, key, result, warnings, now),
                         Err(e) => {
-                            self.errors.insert(view, (key, WorkerError { kind: "protocol".into(), message: e }));
+                            self.errors
+                                .insert(view, (key, WorkerError::new("protocol", e)));
                         }
                     },
                 }
             }
             Inflight::Frame => {
-                let Some(player) = self.scope.as_mut() else { return };
+                let Some(player) = self.scope.as_mut() else {
+                    return;
+                };
                 player.in_flight = false;
                 if error.is_some() {
                     player.playing = false;
@@ -613,7 +657,9 @@ impl GuiApp {
             let Some(kind) = opts.schema.option(&dest).map(|o| o.kind) else {
                 self.notify(
                     Level::Warning,
-                    format!("--set: the {} view has no option '{dest}'", view.cli_name()),
+                    Text::from(Msg::SetNoOption)
+                        .arg("view", view.cli_name())
+                        .arg("option", dest.as_str()),
                 );
                 continue;
             };
@@ -627,7 +673,9 @@ impl GuiApp {
                         Err(_) => {
                             self.notify(
                                 Level::Warning,
-                                format!("--set {dest}: '{text}' is not a number"),
+                                Text::from(Msg::SetNotNumber)
+                                    .arg("option", dest.as_str())
+                                    .arg("value", text.as_str()),
                             );
                             continue;
                         }
@@ -680,8 +728,14 @@ impl GuiApp {
             if let Some(unit) = self.startup.unit.take() {
                 match desc.units.iter().find(|u| u.name == unit) {
                     Some(u) if u.available => self.unit = unit,
-                    Some(u) => self.notify(Level::Warning, u.reason.clone().unwrap_or_default()),
-                    None => self.notify(Level::Warning, format!("--unit: no unit '{unit}' here")),
+                    Some(u) => {
+                        let reason = u.reason_text().unwrap_or_default();
+                        self.notify(Level::Warning, reason);
+                    }
+                    None => self.notify(
+                        Level::Warning,
+                        Text::from(Msg::UnitNotHere).arg("unit", unit.as_str()),
+                    ),
                 }
             }
             if let Some(z) = self.startup.zoom.take()
@@ -692,7 +746,7 @@ impl GuiApp {
         }
         self.results.clear();
         self.errors.clear();
-        self.warnings = desc.warnings.clone();
+        self.warnings = protocol::warning_texts(&desc.warnings, &desc.warning_codes);
         // The trace needs a position (the CLI requires one): the middle of the
         // fibre, the index the CLI's own fallback takes, unless one is set
         // that lies on this fibre.
@@ -729,14 +783,15 @@ impl GuiApp {
                 .parent()
                 .map(|p| p.to_path_buf())
         });
+        let lang = self.lang;
         std::thread::spawn(move || {
             let mut dialog = rfd::FileDialog::new()
-                .set_title("Open a recording")
+                .set_title(lang.t(Msg::DialogTitle))
                 .add_filter(
-                    "Audace recordings",
+                    lang.t(Msg::DialogRecordings),
                     &["dat", "h5", "hdf5", "tdms", "sgy", "segy"],
                 )
-                .add_filter("All files", &["*"]);
+                .add_filter(lang.t(Msg::DialogAllFiles), &["*"]);
             if let Some(dir) = start_dir {
                 dialog = dialog.set_directory(dir);
             }
@@ -758,10 +813,7 @@ impl GuiApp {
             Err(mpsc::TryRecvError::Empty) => {}
             Err(mpsc::TryRecvError::Disconnected) => {
                 self.dialog = None;
-                self.notify(
-                    Level::Warning,
-                    "The file dialog could not be shown; type the path instead.",
-                );
+                self.notify(Level::Warning, Msg::DialogFailed);
             }
         }
     }
@@ -944,16 +996,9 @@ impl GuiApp {
         {
             *cancelled_at = Some(Instant::now());
             // Not asked again until the options change or Render is pressed.
-            self.errors.insert(
-                *view,
-                (
-                    key.clone(),
-                    WorkerError {
-                        kind: "cancelled".into(),
-                        message: "Cancelled.".into(),
-                    },
-                ),
-            );
+            let mut cancelled = WorkerError::new("cancelled", "Cancelled.");
+            cancelled.code = Some("cancelled".into());
+            self.errors.insert(*view, (key.clone(), cancelled));
             if let Some(w) = self.worker.as_mut() {
                 let _ = w.cancel(id);
             }
@@ -979,7 +1024,7 @@ impl GuiApp {
         view: View,
         key: String,
         result: ViewResult,
-        warnings: Vec<String>,
+        warnings: Vec<WorkerText>,
         now: Instant,
     ) {
         self.result_serial += 1;
@@ -1069,13 +1114,8 @@ impl GuiApp {
 }
 
 /// What to do when the worker cannot start.
-pub fn install_hint(interpreter: &str) -> String {
-    format!(
-        "The viewer needs audace-display (with its GUI worker) and invisensing installed in the \
-         Python it runs (`{interpreter}`):\n    {interpreter} -m pip install audace-display\n\
-         or, from a checkout of audace-display:\n    {interpreter} -m pip install -e <path to audace-display>\n\
-         The interpreter can be changed in Settings."
-    )
+pub fn install_hint(interpreter: &str) -> Text {
+    Text::from(Msg::InstallHint).arg("interpreter", interpreter)
 }
 
 /// The shared waker type, for main.
@@ -1129,6 +1169,45 @@ mod tests {
         assert_eq!(z.unit.as_deref(), Some("strain_rate"));
         assert!(parse(&["--zoom", "2:1"]).is_err());
         assert!(parse(&["--zoom", "1:2:3"]).is_err());
+        let l = parse(&["--lang", "fr", "--settings"]).unwrap();
+        assert_eq!((l.lang, l.settings), (Some(Lang::Fr), true));
+        assert_eq!(parse(&[]).unwrap().lang, None);
+        assert!(parse(&["--lang", "de"]).is_err());
+    }
+
+    #[test]
+    fn a_language_chosen_in_settings_applies_at_once_and_is_saved() {
+        let startup = parse(&["--lang", "en"]).unwrap();
+        let mut app = GuiApp::new(Settings::default(), None, startup, waker(|| {}));
+        let dir = std::env::temp_dir().join(format!("audace-gui-lang-{}", std::process::id()));
+        app.settings_path = Some(dir.join("settings.json"));
+        assert_eq!(app.lang, Lang::En, "--lang wins over the system's locale");
+        app.notify(Level::Info, Msg::CancelStuck);
+        app.set_language(Some(Lang::Fr));
+        assert_eq!(app.lang, Lang::Fr);
+        // What is already on screen follows the new language.
+        assert!(
+            app.notices[0]
+                .text
+                .render(app.lang)
+                .starts_with("Un calcul annulé")
+        );
+        let (saved, _) = Settings::load_from(app.settings_path.as_deref());
+        assert_eq!(saved.language, Some(Lang::Fr));
+        app.set_language(None);
+        assert_eq!(app.lang, app.system_lang);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_install_hint_is_the_same_text_in_english() {
+        assert_eq!(
+            install_hint("py -3").render(Lang::En),
+            "The viewer needs audace-display (with its GUI worker) and invisensing installed in \
+             the Python it runs (`py -3`):\n    py -3 -m pip install audace-display\nor, from a \
+             checkout of audace-display:\n    py -3 -m pip install -e <path to audace-display>\n\
+             The interpreter can be changed in Settings."
+        );
     }
 
     fn player(n_window: u64, trig: f64) -> (ScopePlayer, Instant) {

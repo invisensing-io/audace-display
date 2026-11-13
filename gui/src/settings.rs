@@ -1,9 +1,11 @@
-//! The viewer's persisted settings (the Python interpreter, recent files).
+//! The viewer's persisted settings (the Python interpreter, the language,
+//! recent files).
 
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::i18n::{Lang, Msg, Text};
 use crate::worker;
 
 const RECENT_FILES: usize = 10;
@@ -18,6 +20,8 @@ pub struct Settings {
     pub recent_files: Vec<String>,
     /// Re-render a view shortly after one of its options changes.
     pub auto_render: bool,
+    /// The language of the window; `None` follows the system's locale.
+    pub language: Option<Lang>,
 }
 
 impl Default for Settings {
@@ -26,6 +30,7 @@ impl Default for Settings {
             interpreter: worker::default_interpreter().to_string(),
             recent_files: Vec::new(),
             auto_render: true,
+            language: None,
         }
     }
 }
@@ -44,41 +49,47 @@ pub fn settings_path() -> Option<PathBuf> {
     Some(base.join("audace-display-gui").join("settings.json"))
 }
 
+/// `path: error`, for the window.
+fn path_error(path: &Path, e: impl std::fmt::Display) -> Text {
+    Text::from(Msg::PathError)
+        .arg("path", path.display().to_string())
+        .arg("error", e.to_string())
+}
+
 impl Settings {
     /// The saved settings, or the defaults (with the reason they could not
     /// be read, when a file exists but is unreadable).
-    pub fn load_from(path: Option<&Path>) -> (Settings, Option<String>) {
+    pub fn load_from(path: Option<&Path>) -> (Settings, Option<Text>) {
         let Some(path) = path else {
             return (Settings::default(), None);
+        };
+        let unreadable = |e: &dyn std::fmt::Display| {
+            Text::from(Msg::SettingsUnreadable)
+                .arg("path", path.display().to_string())
+                .arg("error", e.to_string())
         };
         match std::fs::read(path) {
             Ok(bytes) => match serde_json::from_slice(&bytes) {
                 Ok(s) => (s, None),
-                Err(e) => (
-                    Settings::default(),
-                    Some(format!("{}: {e}; defaults used", path.display())),
-                ),
+                Err(e) => (Settings::default(), Some(unreadable(&e))),
             },
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => (Settings::default(), None),
-            Err(e) => (
-                Settings::default(),
-                Some(format!("{}: {e}; defaults used", path.display())),
-            ),
+            Err(e) => (Settings::default(), Some(unreadable(&e))),
         }
     }
 
-    pub fn save_to(&self, path: Option<&Path>) -> Result<(), String> {
+    pub fn save_to(&self, path: Option<&Path>) -> Result<(), Text> {
         let Some(path) = path else {
-            return Err("no configuration directory".into());
+            return Err(Msg::NoConfigDir.into());
         };
         if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+            std::fs::create_dir_all(dir).map_err(|e| path_error(dir, e))?;
         }
         let text = serde_json::to_string_pretty(self).expect("settings serialise");
         // Write then rename: a crash never leaves a half-written file.
         let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, text).map_err(|e| format!("{}: {e}", tmp.display()))?;
-        std::fs::rename(&tmp, path).map_err(|e| format!("{}: {e}", path.display()))
+        std::fs::write(&tmp, text).map_err(|e| path_error(&tmp, e))?;
+        std::fs::rename(&tmp, path).map_err(|e| path_error(path, e))
     }
 
     pub fn remember_file(&mut self, path: &str) {
@@ -104,6 +115,7 @@ mod tests {
         let path = scratch("roundtrip");
         let mut s = Settings {
             interpreter: r#""C:\Py 3\python.exe""#.into(),
+            language: Some(Lang::Fr),
             ..Settings::default()
         };
         s.remember_file("/data/a.h5");
@@ -128,7 +140,7 @@ mod tests {
         std::fs::write(&path, b"{not json").unwrap();
         let (s, warning) = Settings::load_from(Some(&path));
         assert_eq!(s, Settings::default());
-        assert!(warning.unwrap().contains("defaults used"));
+        assert!(warning.unwrap().render(Lang::En).contains("defaults used"));
         let _ = std::fs::remove_dir_all(path.parent().unwrap().parent().unwrap());
     }
 
@@ -137,6 +149,21 @@ mod tests {
         let s: Settings = serde_json::from_str(r#"{"interpreter": "python3.12"}"#).unwrap();
         assert_eq!(s.interpreter, "python3.12");
         assert!(s.auto_render);
+        assert_eq!(s.language, None, "no language saved: the system's");
+    }
+
+    #[test]
+    fn the_language_is_saved_by_its_code() {
+        let s = Settings {
+            language: Some(Lang::Fr),
+            ..Settings::default()
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(json.contains(r#""language":"fr""#), "{json}");
+        let back: Settings = serde_json::from_str(r#"{"language": "en"}"#).unwrap();
+        assert_eq!(back.language, Some(Lang::En));
+        let unknown: Settings = serde_json::from_str(r#"{"language": null}"#).unwrap();
+        assert_eq!(unknown.language, None);
     }
 
     #[test]

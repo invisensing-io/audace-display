@@ -8,11 +8,12 @@ use bevy_egui::egui::{
     self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, Ui, Vec2, epaint::TextShape, vec2,
 };
 use egui_plot::{
-    FilledArea, HoverPosition, Legend, Line, Plot, PlotBounds, PlotImage, PlotPoint, PlotPoints,
-    Text, VLine,
+    FilledArea, GridMark, HoverPosition, Legend, Line, Plot, PlotBounds, PlotImage, PlotPoint,
+    PlotPoints, Text, VLine,
 };
 
 use crate::app::PlotNav;
+use crate::i18n::{Lang, Msg, localize_number, num};
 use crate::views::{Image2d, envelope};
 
 /// `x` with `sig` significant digits, the way `%g` prints it.
@@ -42,6 +43,24 @@ pub fn fmt_g(x: f64, sig: usize) -> String {
         } else {
             s
         }
+    }
+}
+
+/// A tick of an axis as egui_plot writes it by default, in `lang` (a
+/// decimal comma in French).
+fn tick(lang: Lang, mark: GridMark) -> String {
+    let decimals = -mark.step_size.log10().round() as usize;
+    let text = egui::emath::format_with_decimals_in_range(mark.value, decimals..=decimals);
+    localize_number(lang, &text)
+}
+
+/// The axes of `plot` written in `lang`: egui_plot's own ticks in English.
+fn localized_axes<'a>(plot: Plot<'a>, lang: Lang) -> Plot<'a> {
+    match lang {
+        Lang::En => plot,
+        Lang::Fr => plot
+            .x_axis_formatter(move |m, _| tick(lang, m))
+            .y_axis_formatter(move |m, _| tick(lang, m)),
     }
 }
 
@@ -101,22 +120,26 @@ fn track_bounds(
 }
 
 /// A waterfall: the image in plot coordinates (distance, time downwards).
+/// `label` is the quantity of the colour bar, in `lang`.
+#[allow(clippy::too_many_arguments)]
 pub fn heatmap(
     ui: &mut Ui,
     id: &str,
     img: &Image2d,
+    label: &str,
     nav: &mut PlotNav,
     fit: bool,
     link: Option<&str>,
     size: Vec2,
+    lang: Lang,
 ) -> PlotOutcome {
-    let label = img.label.clone();
-    let mut plot = Plot::new(id)
+    let label = label.to_string();
+    let plot = Plot::new(id)
         .width(size.x)
         .height(size.y)
         .invert_y(true)
-        .x_axis_label("Distance (m)")
-        .y_axis_label("Time (s)")
+        .x_axis_label(lang.t(Msg::AxisDistance))
+        .y_axis_label(lang.t(Msg::AxisTime))
         .allow_double_click_reset(false)
         .show_grid(false)
         .label_formatter(move |hp: &HoverPosition<'_>| {
@@ -126,15 +149,16 @@ pub fn heatmap(
             };
             let value = img
                 .cell_at(p.x, p.y)
-                .map(|(_, _, v)| fmt_g(v as f64, 5))
+                .map(|(_, _, v)| num(lang, v as f64, 5))
                 .unwrap_or_else(|| "-".into());
             Some(format!(
                 "d = {} m\nt = {} s\n{} = {value}",
-                fmt_g(p.x, 6),
-                fmt_g(p.y, 6),
+                num(lang, p.x, 6),
+                num(lang, p.y, 6),
                 label
             ))
         });
+    let mut plot = localized_axes(plot, lang);
     if let Some(group) = link {
         plot = plot
             .link_axis(group.to_string(), [true, true])
@@ -172,8 +196,8 @@ pub fn heatmap(
 }
 
 /// The colour bar of an image: `vmax` at the top, `vmin` at the bottom, the
-/// label written upwards beside it.
-pub fn colorbar(ui: &mut Ui, img: &Image2d, height: f32) {
+/// label (in `lang`) written upwards beside it.
+pub fn colorbar(ui: &mut Ui, img: &Image2d, label: &str, height: f32, lang: Lang) {
     let width = 92.0;
     let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
     let painter = ui.painter_at(rect);
@@ -211,12 +235,12 @@ pub fn colorbar(ui: &mut Ui, img: &Image2d, height: f32) {
         painter.text(
             Pos2::new(bar.right() + 6.0, y),
             Align2::LEFT_CENTER,
-            fmt_g(v, 4),
+            num(lang, v, 4),
             font.clone(),
             text_color,
         );
     }
-    let galley = painter.layout_no_wrap(img.label.clone(), FontId::proportional(12.0), text_color);
+    let galley = painter.layout_no_wrap(label.to_string(), FontId::proportional(12.0), text_color);
     let pos = Pos2::new(
         rect.right() - 2.0 - galley.size().y,
         bar.center().y + galley.size().x / 2.0,
@@ -235,13 +259,15 @@ pub fn trace(
     nav: &mut PlotNav,
     fit: bool,
     size: Vec2,
+    lang: Lang,
 ) -> PlotOutcome {
     let plot = Plot::new("trace")
         .width(size.x)
         .height(size.y)
-        .x_axis_label("Time (s)")
+        .x_axis_label(lang.t(Msg::AxisTime))
         .y_axis_label(y_label.to_string())
         .allow_double_click_reset(false);
+    let plot = localized_axes(plot, lang);
     let same = lo == hi;
     let bins = (size.x as usize).max(100);
     let resp = plot.show(ui, |pui| {
@@ -364,32 +390,36 @@ pub struct LinePlot<'a> {
     pub log_y: bool,
     /// A vertical marker and its text (the dominant peak).
     pub marker: Option<(f64, f64, String)>,
+    /// The language of the ticks and the pointer's readout.
+    pub lang: Lang,
 }
 
 impl LinePlot<'_> {
     pub fn show(self, ui: &mut Ui, size: Vec2) {
         let legend = self.curves.iter().any(|c| c.0.is_some());
         let log_y = self.log_y;
-        let mut plot = Plot::new(self.id.as_str())
+        let lang = self.lang;
+        let plot = Plot::new(self.id.as_str())
             .width(size.x)
             .height(size.y)
             .x_axis_label(self.x_label.clone())
             .y_axis_label(self.y_label.clone());
+        let mut plot = localized_axes(plot, lang);
         if legend {
             plot = plot.legend(Legend::default());
         }
         if log_y {
             plot = plot
-                .y_axis_formatter(|mark, _| format!("1e{}", fmt_g(mark.value, 3)))
-                .label_formatter(|hp: &HoverPosition<'_>| {
+                .y_axis_formatter(move |mark, _| format!("1e{}", num(lang, mark.value, 3)))
+                .label_formatter(move |hp: &HoverPosition<'_>| {
                     let p = match hp {
                         HoverPosition::NearDataPoint { position, .. }
                         | HoverPosition::Elsewhere { position } => position,
                     };
                     Some(format!(
                         "x = {}\ny = {}",
-                        fmt_g(p.x, 6),
-                        fmt_g(10f64.powf(p.y), 5)
+                        num(lang, p.x, 6),
+                        num(lang, 10f64.powf(p.y), 5)
                     ))
                 });
         }
@@ -461,6 +491,14 @@ mod tests {
         assert_eq!(fmt_g(123456.0, 4), "1.235e5");
         assert_eq!(fmt_g(0.00001234, 3), "1.23e-5");
         assert_eq!(fmt_g(0.001, 3), "0.001");
+    }
+
+    #[test]
+    fn ticks_are_egui_plots_with_a_decimal_comma_in_french() {
+        let mark = |value: f64, step_size: f64| GridMark { value, step_size };
+        assert_eq!(tick(Lang::En, mark(0.25, 0.01)), "0.25");
+        assert_eq!(tick(Lang::Fr, mark(0.25, 0.01)), "0,25");
+        assert_eq!(tick(Lang::Fr, mark(1200.0, 100.0)), "1200");
     }
 
     #[test]

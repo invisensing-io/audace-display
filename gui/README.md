@@ -125,21 +125,64 @@ command, e.g. `/home/me/venvs/das/bin/python` or
 `"C:\Program Files\Python312\python.exe"` (quote a path with spaces). It is
 saved in `%APPDATA%\audace-display-gui\settings.json` on Windows and
 `~/.config/audace-display-gui/settings.json` on Linux
-(`$XDG_CONFIG_HOME` when set), with the recent files.
+(`$XDG_CONFIG_HOME` when set), with the language and the recent files.
+
+### Language
+
+The window is in **English or French**. *Settings* → *Language* offers
+*System*, *English* and *Français*; the choice applies at once (no restart)
+and is saved (`"language": "en"`, `"fr"`, or `null` for the system's).
+*System*, the default, follows the operating system's locale: French when it
+starts with `fr` (`fr_FR.UTF-8`, `fr-CA`...), English otherwise. On Linux the
+locale is the first of `LANGUAGE`, `LC_ALL`, `LC_MESSAGES` and `LANG` that is
+set; on Windows, the user's display language. `--lang en` or `--lang fr` on
+the command line picks the language of one run without saving it.
+
+In French everything the window writes is French: menus, buttons, views,
+option groups, names and help, tooltips, the status bar and progress,
+Settings, the log window, notices and error banners, and the texts that come
+from the CLI: plot titles, axis and colour-bar labels (`strain rate
+(nm/m/s)` reads `vitesse de déformation (nm/m/s)`), the inspection's
+statistics, the `info` text (its keys re-aligned), the CLI's refusals and
+warnings. Numbers are written the French way (`0,25`, `20 000`); a number
+field shows a decimal comma and takes a comma or a point. The values sent
+to the CLI are the same numbers in either language.
+
+What stays as the CLI writes it, in both languages: units (`nm/m`, `rad`,
+`Hz`), option flags inside a sentence (`--f1`), the CLI's names of modes,
+channels, content types, colormaps and choices (`phase`, `raw`, `hann`,
+`mean`), file names and paths, and the text of an option that is CLI syntax
+(the FFT's position list `10,20,30` keeps its decimal point). A message the
+viewer does not know stays in English: an error of the operating system or of
+a library (invisensing, numpy) inside a French sentence, a Python warning, a
+refusal or a help text a newer CLI words differently, a title or label of
+another shape.
+
+How it works: the window's texts are one catalogue (`src/i18n.rs`, an entry
+per message id with its English and its French; a test fails when an entry
+lacks one, or when the French breaks its typography). The worker sends the
+CLI's texts in English and attaches a stable code with parameters to each
+refusal, error and warning it knows (protocol below); the viewer renders the
+code in its language, the worker's English when the code is unknown. The
+fixed titles and labels are rebuilt from the patterns the CLI writes them with
+(`src/cli_text.rs`).
 
 ### Command line
 
 ```text
-audace-display-gui [FILE] [--python CMD] [--view VIEW] [--unit UNIT]
-                   [--set DEST=VALUE]... [--zoom T0:T1[:D0:D1]] [--screenshot OUT.png]
+audace-display-gui [FILE] [--python CMD] [--lang en|fr] [--view VIEW] [--unit UNIT]
+                   [--set DEST=VALUE]... [--zoom T0:T1[:D0:D1]] [--settings]
+                   [--screenshot OUT.png]
 ```
 
-`--python` overrides the saved interpreter for one run; `--view` is one of
+`--python` overrides the saved interpreter for one run, `--lang` the
+language (above); `--view` is one of
 `info`, `heatmap`, `bandheatmaps`, `fft`, `trace`, `scope`, `inspect`;
 `--unit` is `rad`, `nanostrain` or `strain_rate`; `--set` gives an option
 of that view by its CLI name (`--set f1=50`, `--set db=true`); `--zoom`
 opens a waterfall (or a trace) on seconds `T0..T1` (and metres `D0..D1`);
-`--screenshot` saves the window once the view is drawn, then quits.
+`--settings` opens the Settings window; `--screenshot` saves the window once
+the view is drawn, then quits once the image is written.
 
 To look at the viewer on a machine without a display (or to keep it off a
 GPU), run it on a virtual display with Mesa's software Vulkan driver:
@@ -180,7 +223,11 @@ The protocol (version 1) is described in the docstring of
 result carrying arrays lists their name, dtype (`<f4`, `<f8`, `|u1`), shape
 and byte count, and exactly those bytes follow the line, little-endian, C
 order. Requests are `hello`, `open`, `render`, `scope_frame`, `cancel` and
-`shutdown`. The worker writes nothing else to stdout (stray prints go to
+`shutdown`. The texts are English; an error, a warning (`warning_codes`) and
+the reason a view or unit is unavailable also carry a message `code` and its
+`params` when the worker knows the message, which the viewer renders in its
+language (optional fields: an older worker without them, or a viewer that
+ignores them, still speaks protocol 1). The worker writes nothing else to stdout (stray prints go to
 stderr), reads its input on a thread of its own so that a `cancel` stops the
 current request between two chunks of the read, and reports the pulses read
 as `progress`.
@@ -193,9 +240,14 @@ matplotlib's `Normalize` and `Colormap` do.
 
 ```bash
 cd gui
-cargo test          # framing, parsing, colours, options, settings
+cargo test          # framing, parsing, colours, options, settings, the catalogue
 cargo clippy --all-targets
 AUDACE_GUI_TEST_PYTHON=python3 cargo test   # also talks to a real worker
 ```
+
+With `AUDACE_GUI_TEST_PYTHON`, the tests also check that every message code
+the installed worker can send (`gui_worker.message_codes()`) has its
+catalogue entry, and that the entry uses only the parameters sent with it.
+A new code needs an entry in `worker_msg` (`src/i18n.rs`).
 
 The worker's tests are in the Python suite (`tests/test_gui_worker.py`).

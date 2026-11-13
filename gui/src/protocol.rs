@@ -13,6 +13,8 @@ use std::io::{BufRead, Read};
 use serde::Deserialize;
 use serde_json::Value;
 
+use crate::i18n::{Lang, Msg, Text, WorkerText};
+
 /// The protocol version this viewer speaks.
 pub const PROTOCOL: u32 = 1;
 
@@ -25,24 +27,36 @@ const MAX_ARRAY_BYTES: usize = 8 * 1024 * 1024 * 1024;
 #[derive(Debug)]
 pub enum ProtocolError {
     Io(std::io::Error),
-    /// The stream ended in the middle of a message.
-    Truncated(String),
+    /// The stream ended in the middle of a message: of a header line
+    /// (`None`) or of the array named.
+    Truncated(Option<String>),
     /// A header line that is not the JSON the protocol describes.
     BadHeader(String),
     /// An array descriptor that does not add up.
     BadArray(String),
 }
 
+impl ProtocolError {
+    /// The error for the window (its detail, from serde or the OS, stays
+    /// in English).
+    pub fn text(&self) -> Text {
+        match self {
+            ProtocolError::Io(e) => Text::from(Msg::ReadFailed).arg("error", e.to_string()),
+            ProtocolError::Truncated(None) => Text::from(Msg::OutputStoppedLine),
+            ProtocolError::Truncated(Some(name)) => {
+                Text::from(Msg::OutputStoppedArray).arg("name", name.as_str())
+            }
+            ProtocolError::BadHeader(why) => {
+                Text::from(Msg::BadMessage).arg("detail", why.as_str())
+            }
+            ProtocolError::BadArray(why) => Text::from(Msg::BadArray).arg("detail", why.as_str()),
+        }
+    }
+}
+
 impl fmt::Display for ProtocolError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ProtocolError::Io(e) => write!(f, "reading the worker: {e}"),
-            ProtocolError::Truncated(what) => {
-                write!(f, "the worker's output stopped inside {what}")
-            }
-            ProtocolError::BadHeader(why) => write!(f, "unreadable message from the worker: {why}"),
-            ProtocolError::BadArray(why) => write!(f, "bad array from the worker: {why}"),
-        }
+        f.write_str(&self.text().render(Lang::En))
     }
 }
 
@@ -203,7 +217,7 @@ pub fn read_message<R: BufRead>(reader: &mut R) -> Result<Option<Message>, Proto
                 "a header line is longer than {MAX_LINE_BYTES} bytes"
             )));
         }
-        return Err(ProtocolError::Truncated("a header line".into()));
+        return Err(ProtocolError::Truncated(None));
     }
     let header: Value = serde_json::from_slice(&line).map_err(|e| {
         let text = String::from_utf8_lossy(&line);
@@ -251,9 +265,7 @@ pub fn read_message<R: BufRead>(reader: &mut R) -> Result<Option<Message>, Proto
         }
         let mut bytes = vec![0u8; d.nbytes];
         reader.read_exact(&mut bytes).map_err(|e| match e.kind() {
-            std::io::ErrorKind::UnexpectedEof => {
-                ProtocolError::Truncated(format!("the array '{}'", d.name))
-            }
+            std::io::ErrorKind::UnexpectedEof => ProtocolError::Truncated(Some(d.name.clone())),
             _ => ProtocolError::Io(e),
         })?;
         arrays.push(Array {
@@ -273,6 +285,53 @@ pub fn encode_request(request: &Value) -> Vec<u8> {
 }
 
 // --- Typed messages -----------------------------------------------------------
+
+/// The code and parameters the worker attaches to a message it knows, for
+/// the viewer to render it in its language (see `gui_worker.py`). Optional:
+/// an older worker sends none, and its English words are shown.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct Code {
+    pub code: String,
+    #[serde(default)]
+    pub params: BTreeMap<String, Value>,
+}
+
+/// Parameters as text (the worker sends strings; anything else is written
+/// as JSON).
+fn param_strings(params: &BTreeMap<String, Value>) -> BTreeMap<String, String> {
+    params
+        .iter()
+        .map(|(k, v)| {
+            let s = match v {
+                Value::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            (k.clone(), s)
+        })
+        .collect()
+}
+
+/// A worker text from its English words and its optional code.
+pub fn worker_text(text: &str, code: Option<&str>, params: &BTreeMap<String, Value>) -> WorkerText {
+    WorkerText {
+        text: text.to_string(),
+        code: code.map(str::to_string),
+        params: param_strings(params),
+    }
+}
+
+/// The warnings of a result with their codes (`warning_codes` is aligned
+/// with `warnings`; absent from an older worker).
+pub fn warning_texts(warnings: &[String], codes: &[Option<Code>]) -> Vec<WorkerText> {
+    warnings
+        .iter()
+        .enumerate()
+        .map(|(i, w)| match codes.get(i) {
+            Some(Some(c)) => worker_text(w, Some(&c.code), &c.params),
+            _ => WorkerText::plain(w.as_str()),
+        })
+        .collect()
+}
 
 /// The kind of value an option takes, as the CLI's parser declares it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -344,6 +403,20 @@ pub struct Availability {
     pub available: bool,
     #[serde(default)]
     pub reason: Option<String>,
+    /// The code of `reason`, when the worker knows it.
+    #[serde(default)]
+    pub code: Option<String>,
+    #[serde(default)]
+    pub params: BTreeMap<String, Value>,
+}
+
+impl Availability {
+    /// Why it is not available, as a worker text.
+    pub fn reason_text(&self) -> Option<WorkerText> {
+        self.reason
+            .as_deref()
+            .map(|r| worker_text(r, self.code.as_deref(), &self.params))
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -384,6 +457,8 @@ pub struct FileDescription {
     pub units: Vec<Availability>,
     #[serde(default)]
     pub warnings: Vec<String>,
+    #[serde(default)]
+    pub warning_codes: Vec<Option<Code>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -398,6 +473,28 @@ pub struct Progress {
 pub struct WorkerError {
     pub kind: String,
     pub message: String,
+    /// The code of `message`, when the worker knows it.
+    #[serde(default)]
+    pub code: Option<String>,
+    #[serde(default)]
+    pub params: BTreeMap<String, Value>,
+}
+
+impl WorkerError {
+    /// An error of the viewer itself (`kind`, English words, no code).
+    pub fn new(kind: &str, message: impl Into<String>) -> WorkerError {
+        WorkerError {
+            kind: kind.into(),
+            message: message.into(),
+            code: None,
+            params: BTreeMap::new(),
+        }
+    }
+
+    /// The message as a worker text.
+    pub fn text(&self) -> WorkerText {
+        worker_text(&self.message, self.code.as_deref(), &self.params)
+    }
 }
 
 /// A colormap as the worker sends it beside its lookup table.
@@ -423,6 +520,8 @@ pub struct HeatmapMeta {
     pub colormap: ColormapMeta,
     #[serde(default)]
     pub warnings: Vec<String>,
+    #[serde(default)]
+    pub warning_codes: Vec<Option<Code>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -445,6 +544,8 @@ pub struct BandsMeta {
     pub panels: Vec<PanelMeta>,
     #[serde(default)]
     pub warnings: Vec<String>,
+    #[serde(default)]
+    pub warning_codes: Vec<Option<Code>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -457,6 +558,8 @@ pub struct FftMeta {
     pub curves: Vec<Option<String>>,
     #[serde(default)]
     pub warnings: Vec<String>,
+    #[serde(default)]
+    pub warning_codes: Vec<Option<Code>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -465,6 +568,8 @@ pub struct TraceMeta {
     pub label: String,
     #[serde(default)]
     pub warnings: Vec<String>,
+    #[serde(default)]
+    pub warning_codes: Vec<Option<Code>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -480,6 +585,8 @@ pub struct InspectMeta {
     pub fmax: Option<f64>,
     #[serde(default)]
     pub warnings: Vec<String>,
+    #[serde(default)]
+    pub warning_codes: Vec<Option<Code>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -504,6 +611,8 @@ pub struct ScopeMeta {
     pub frame: FrameMeta,
     #[serde(default)]
     pub warnings: Vec<String>,
+    #[serde(default)]
+    pub warning_codes: Vec<Option<Code>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -511,6 +620,8 @@ pub struct InfoMeta {
     pub text: String,
     #[serde(default)]
     pub warnings: Vec<String>,
+    #[serde(default)]
+    pub warning_codes: Vec<Option<Code>>,
 }
 
 #[cfg(test)]

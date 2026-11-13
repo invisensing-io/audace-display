@@ -10,6 +10,7 @@ use std::thread;
 
 use serde_json::{Map, Value, json};
 
+use crate::i18n::{Msg, Text};
 use crate::protocol::{self, Message};
 
 /// The module the worker runs as (`python -m ...`).
@@ -33,7 +34,7 @@ pub fn fallback_interpreter(command: &str) -> Option<&'static str> {
 /// separated by blanks; double or single quotes keep a path with spaces in
 /// one word (`"C:\Program Files\Python312\python.exe" -X utf8`). A backslash
 /// is an ordinary character, as in a Windows path.
-pub fn split_command(command: &str) -> Result<Vec<String>, String> {
+pub fn split_command(command: &str) -> Result<Vec<String>, Text> {
     let mut words = Vec::new();
     let mut word = String::new();
     let mut in_word = false;
@@ -59,13 +60,13 @@ pub fn split_command(command: &str) -> Result<Vec<String>, String> {
         }
     }
     if let Some(q) = quote {
-        return Err(format!("unbalanced {q} in the interpreter command"));
+        return Err(Text::from(Msg::UnbalancedQuote).arg("quote", q.to_string()));
     }
     if in_word {
         words.push(word);
     }
     if words.is_empty() {
-        return Err("the interpreter command is empty".into());
+        return Err(Msg::EmptyCommand.into());
     }
     Ok(words)
 }
@@ -75,7 +76,7 @@ pub fn split_command(command: &str) -> Result<Vec<String>, String> {
 pub enum WorkerEvent {
     Message(Message),
     /// The worker's output ended or became unreadable; the text says why.
-    Stopped(String),
+    Stopped(Text),
 }
 
 /// Called after each event, to wake the UI loop up.
@@ -94,7 +95,7 @@ pub struct WorkerProcess {
 
 impl WorkerProcess {
     /// Starts `<interpreter> -m audace_display.gui_worker`.
-    pub fn spawn(interpreter: &str, waker: Waker) -> Result<WorkerProcess, String> {
+    pub fn spawn(interpreter: &str, waker: Waker) -> Result<WorkerProcess, Text> {
         let words = split_command(interpreter)?;
         let mut cmd = Command::new(&words[0]);
         cmd.args(&words[1..])
@@ -112,9 +113,11 @@ impl WorkerProcess {
             cmd.creation_flags(CREATE_NO_WINDOW);
         }
         let command_line = format!("{} -m {WORKER_MODULE}", words.join(" "));
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| format!("cannot start `{command_line}`: {e}"))?;
+        let mut child = cmd.spawn().map_err(|e| {
+            Text::from(Msg::CannotStart)
+                .arg("command", command_line.as_str())
+                .arg("error", e.to_string())
+        })?;
         let stdout = child.stdout.take().expect("piped stdout");
         let stderr_pipe = child.stderr.take().expect("piped stderr");
         let stdin = child.stdin.take();
@@ -134,7 +137,7 @@ impl WorkerProcess {
     }
 
     /// Sends `{"id": <new>, "cmd": cmd, ...fields}`; returns the id.
-    pub fn request(&mut self, cmd: &str, fields: Map<String, Value>) -> Result<u64, String> {
+    pub fn request(&mut self, cmd: &str, fields: Map<String, Value>) -> Result<u64, Text> {
         self.next_id += 1;
         let id = self.next_id;
         let mut req = fields;
@@ -145,16 +148,19 @@ impl WorkerProcess {
     }
 
     /// Asks the worker to stop request `id`.
-    pub fn cancel(&mut self, id: u64) -> Result<(), String> {
+    pub fn cancel(&mut self, id: u64) -> Result<(), Text> {
         self.write(&json!({"cmd": "cancel", "target": id}))
     }
 
-    fn write(&mut self, request: &Value) -> Result<(), String> {
-        let stdin = self.stdin.as_mut().ok_or("the worker's input is closed")?;
+    fn write(&mut self, request: &Value) -> Result<(), Text> {
+        let stdin = self
+            .stdin
+            .as_mut()
+            .ok_or_else(|| Text::from(Msg::InputClosed))?;
         stdin
             .write_all(&protocol::encode_request(request))
             .and_then(|_| stdin.flush())
-            .map_err(|e| format!("writing to the worker: {e}"))
+            .map_err(|e| Text::from(Msg::WriteFailed).arg("error", e.to_string()))
     }
 
     /// The events received since the last call.
@@ -199,8 +205,10 @@ fn spawn_stdout_reader(
             loop {
                 let event = match protocol::read_message(&mut reader) {
                     Ok(Some(m)) => WorkerEvent::Message(m),
-                    Ok(None) => WorkerEvent::Stopped(stopped_text("the worker exited", &stderr)),
-                    Err(e) => WorkerEvent::Stopped(stopped_text(&e.to_string(), &stderr)),
+                    Ok(None) => {
+                        WorkerEvent::Stopped(stopped_text(Msg::WorkerExited.into(), &stderr))
+                    }
+                    Err(e) => WorkerEvent::Stopped(stopped_text(e.text(), &stderr)),
                 };
                 let stop = matches!(event, WorkerEvent::Stopped(_));
                 if tx.send(event).is_err() {
@@ -217,16 +225,16 @@ fn spawn_stdout_reader(
 
 /// `why`, with the worker's last stderr lines (a Python traceback, "No
 /// module named ..."), which usually say the real reason.
-fn stopped_text(why: &str, stderr: &Arc<Mutex<VecDeque<String>>>) -> String {
+fn stopped_text(why: Text, stderr: &Arc<Mutex<VecDeque<String>>>) -> Text {
     // The stderr thread may still be draining the last lines.
     thread::sleep(std::time::Duration::from_millis(150));
     let log = stderr.lock().expect("worker stderr lock");
     let tail: Vec<&str> = log.iter().rev().take(12).map(String::as_str).collect();
     if tail.is_empty() {
-        why.to_string()
+        why
     } else {
         let lines: Vec<&str> = tail.into_iter().rev().collect();
-        format!("{why}:\n{}", lines.join("\n"))
+        why.with_detail(lines.join("\n"))
     }
 }
 
@@ -303,7 +311,8 @@ mod tests {
         let waker: Waker = Arc::new(|| {});
         let err = WorkerProcess::spawn("/no/such/python-interpreter", waker)
             .err()
-            .unwrap();
+            .unwrap()
+            .render(crate::i18n::Lang::En);
         assert!(err.contains("cannot start"), "{err}");
     }
 
@@ -331,7 +340,9 @@ mod tests {
                         assert!(hello.views.contains_key("heatmap"));
                         return;
                     }
-                    WorkerEvent::Stopped(why) => panic!("the worker stopped: {why}"),
+                    WorkerEvent::Stopped(why) => {
+                        panic!("the worker stopped: {}", why.render(crate::i18n::Lang::En))
+                    }
                     _ => {}
                 }
             }

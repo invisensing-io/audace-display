@@ -1,5 +1,6 @@
 //! The window: a top bar (file), the options panel (left), the view
 //! (centre), the status bar (bottom), and the settings and log windows.
+//! Every text is drawn in the language of the moment (`GuiApp::lang`).
 
 use std::time::Instant;
 
@@ -7,7 +8,9 @@ use bevy_egui::egui::{self, Align, Color32, Layout, RichText, ScrollArea, Ui, Ui
 use serde_json::{Value, json};
 
 use crate::app::{GuiApp, Level, WorkerState};
-use crate::params::{self, View, Window};
+use crate::cli_text;
+use crate::i18n::{self, Lang, Msg, count, num, render_worker};
+use crate::params::{self, Group, View, Window};
 use crate::plots::{self, LinePlot, fmt_g};
 use crate::protocol::{OptionKind, OptionSchema};
 use crate::views::ViewResult;
@@ -45,18 +48,19 @@ pub fn draw(app: &mut GuiApp, ctx: &egui::Context) {
 // --- Top bar ------------------------------------------------------------------
 
 fn top_bar(app: &mut GuiApp, ui: &mut Ui) {
+    let lang = app.lang;
     ui.horizontal(|ui| {
         let ready = app.worker_ready();
         if ui
-            .add_enabled(!app.dialog_open(), egui::Button::new("Open…"))
-            .on_hover_text("Choose a recording")
+            .add_enabled(!app.dialog_open(), egui::Button::new(lang.t(Msg::Open)))
+            .on_hover_text(lang.t(Msg::OpenTip))
             .clicked()
         {
             app.pick_file();
         }
         let recent = app.settings.recent_files.clone();
         ui.add_enabled_ui(!recent.is_empty(), |ui| {
-            ui.menu_button("Recent", |ui| {
+            ui.menu_button(lang.t(Msg::Recent), |ui| {
                 for path in recent {
                     if ui.button(&path).clicked() {
                         app.open_file(path);
@@ -67,27 +71,29 @@ fn top_bar(app: &mut GuiApp, ui: &mut Ui) {
         });
         ui.separator();
         let edit = egui::TextEdit::singleline(&mut app.path_input)
-            .hint_text(
-                "Path of a .dat / .h5 / .hdf5 / .tdms / .sgy file (or drop it on the window)",
-            )
+            .hint_text(lang.t(Msg::PathHint))
             .desired_width(ui.available_width() - 260.0);
         let response = ui.add(edit);
         let enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-        if ui.add_enabled(ready, egui::Button::new("Load")).clicked() || (enter && ready) {
+        if ui
+            .add_enabled(ready, egui::Button::new(lang.t(Msg::Load)))
+            .clicked()
+            || (enter && ready)
+        {
             let path = app.path_input.clone();
             app.open_file(path);
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if ui
-                .button("Log")
-                .on_hover_text("What the Python worker printed")
+                .button(lang.t(Msg::Log))
+                .on_hover_text(lang.t(Msg::LogTip))
                 .clicked()
             {
                 app.show_log = !app.show_log;
             }
             if ui
-                .button("Settings")
-                .on_hover_text("Python interpreter, auto-update")
+                .button(lang.t(Msg::Settings))
+                .on_hover_text(lang.t(Msg::SettingsTip))
                 .clicked()
             {
                 app.show_settings = !app.show_settings;
@@ -100,6 +106,7 @@ fn top_bar(app: &mut GuiApp, ui: &mut Ui) {
 // --- Status bar ---------------------------------------------------------------
 
 fn status_bar(app: &mut GuiApp, ui: &mut Ui) {
+    let lang = app.lang;
     ui.horizontal(|ui| {
         match &app.worker_state {
             WorkerState::Ready => {
@@ -118,33 +125,43 @@ fn status_bar(app: &mut GuiApp, ui: &mut Ui) {
             }
             WorkerState::Starting { .. } => {
                 ui.spinner();
-                ui.label(format!("Starting `{}`…", app.worker_command()));
+                ui.label(lang.f(Msg::Starting, &[("command", &app.worker_command())]));
             }
             WorkerState::Failed(_) => {
                 status_dot(ui, ERROR_COLOR);
-                ui.label("The Python worker is not running.");
-                if ui.button("Restart").clicked() {
+                ui.label(lang.t(Msg::NotRunning));
+                if ui.button(lang.t(Msg::Restart)).clicked() {
                     app.restart_worker();
                 }
             }
             WorkerState::Stopped => {
-                ui.label("Worker stopped.");
+                ui.label(lang.t(Msg::Stopped));
             }
         }
         ui.separator();
         if let Some(path) = &app.opening {
             ui.spinner();
-            ui.label(format!("Opening {path}…"));
+            ui.label(lang.f(Msg::Opening, &[("path", path)]));
         } else if app.busy() {
             let (fraction, text) = match &app.progress {
-                Some(p) => match p.total {
-                    Some(t) if t > 0 => (
-                        p.done as f32 / t as f32,
-                        format!("{} {} / {} pulses", p.stage, group(p.done), group(t)),
-                    ),
-                    _ => (0.0, format!("{} {}", p.stage, group(p.done))),
-                },
-                None => (0.0, "computing…".to_string()),
+                Some(p) => {
+                    let stage = cli_text::stage(lang, &p.stage);
+                    match p.total {
+                        Some(t) if t > 0 => (
+                            p.done as f32 / t as f32,
+                            lang.f(
+                                Msg::ProgressPulses,
+                                &[
+                                    ("stage", &stage),
+                                    ("done", &count(lang, p.done)),
+                                    ("total", &count(lang, t)),
+                                ],
+                            ),
+                        ),
+                        _ => (0.0, format!("{stage} {}", count(lang, p.done))),
+                    }
+                }
+                None => (0.0, lang.t(Msg::Computing).to_string()),
             };
             ui.add(
                 egui::ProgressBar::new(fraction)
@@ -153,12 +170,12 @@ fn status_bar(app: &mut GuiApp, ui: &mut Ui) {
                     .animate(true),
             );
             if app.cancelling() {
-                ui.label("Stopping…");
-            } else if ui.button("Cancel").clicked() {
+                ui.label(lang.t(Msg::Stopping));
+            } else if ui.button(lang.t(Msg::Cancel)).clicked() {
                 app.cancel();
             }
         } else if app.render_pending() {
-            ui.label("Waiting for the options to settle…");
+            ui.label(lang.t(Msg::Settling));
         }
     });
 }
@@ -168,25 +185,13 @@ fn status_dot(ui: &mut Ui, color: Color32) {
     ui.painter().circle_filled(rect.center(), 5.0, color);
 }
 
-/// `1234567` -> `1,234,567`.
-fn group(n: u64) -> String {
-    let s = n.to_string();
-    let mut out = String::new();
-    for (i, c) in s.chars().enumerate() {
-        if i > 0 && (s.len() - i).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(c);
-    }
-    out
-}
-
 // --- Options panel ------------------------------------------------------------
 
 fn options_panel(app: &mut GuiApp, ui: &mut Ui) {
+    let lang = app.lang;
     ui.add_space(4.0);
-    ui.heading("View");
-    let available: Vec<(View, bool, Option<String>)> = View::ALL
+    ui.heading(lang.t(Msg::ViewHeading));
+    let available: Vec<(View, bool, Option<i18n::WorkerText>)> = View::ALL
         .iter()
         .map(|&v| {
             let a = app
@@ -196,17 +201,17 @@ fn options_panel(app: &mut GuiApp, ui: &mut Ui) {
             (
                 v,
                 a.is_none_or(|a| a.available),
-                a.and_then(|a| a.reason.clone()),
+                a.and_then(|a| a.reason_text()),
             )
         })
         .filter(|(v, _, _)| app.options.contains_key(v) || app.hello.is_none())
         .collect();
     ui.horizontal_wrapped(|ui| {
         for (v, ok, reason) in &available {
-            let r = ui.add_enabled(*ok, egui::Button::selectable(app.view == *v, v.label()));
-            let r = r.on_hover_text(v.description());
+            let r = ui.add_enabled(*ok, egui::Button::selectable(app.view == *v, v.label(lang)));
+            let r = r.on_hover_text(v.description(lang));
             let r = if let Some(reason) = reason {
-                r.on_disabled_hover_text(reason)
+                r.on_disabled_hover_text(render_worker(lang, reason))
             } else {
                 r
             };
@@ -215,11 +220,11 @@ fn options_panel(app: &mut GuiApp, ui: &mut Ui) {
             }
         }
     });
-    ui.label(RichText::new(app.view.description()).weak());
+    ui.label(RichText::new(app.view.description(lang)).weak());
     ui.separator();
 
     if app.file.is_none() {
-        ui.label("Open a recording to choose its options.");
+        ui.label(lang.t(Msg::OpenToChoose));
         return;
     }
     data_section(app, ui);
@@ -241,32 +246,32 @@ fn options_panel(app: &mut GuiApp, ui: &mut Ui) {
     let Some(opts) = app.options.get_mut(&view) else {
         return;
     };
-    let groups: Vec<(&'static str, Vec<OptionSchema>)> = opts
+    let groups: Vec<(Group, Vec<OptionSchema>)> = opts
         .grouped(view)
         .into_iter()
-        .map(|(t, v)| (t, v.into_iter().cloned().collect()))
+        .map(|(g, v)| (g, v.into_iter().cloned().collect()))
         .collect();
-    for (title, options) in groups {
-        egui::CollapsingHeader::new(RichText::new(title).strong())
-            .id_salt((view, title))
+    for (group, options) in groups {
+        egui::CollapsingHeader::new(RichText::new(group.title(lang)).strong())
+            .id_salt((view, group))
             .default_open(true)
             .show(ui, |ui| {
-                egui::Grid::new((view, title, "grid"))
+                egui::Grid::new((view, group, "grid"))
                     .num_columns(2)
                     .spacing([8.0, 6.0])
                     .striped(false)
                     .show(ui, |ui| {
                         // The exclusive pairs get one radio each.
-                        if title == "Positions" && view == View::Fft {
-                            fft_positions(opts, ui, &summary);
+                        if group == Group::Positions && view == View::Fft {
+                            fft_positions(opts, ui, &summary, lang);
                             return;
                         }
-                        if title == "Location" && view == View::Inspect {
-                            inspect_location(opts, ui, &summary);
+                        if group == Group::Location && view == View::Inspect {
+                            inspect_location(opts, ui, &summary, lang);
                             return;
                         }
                         for o in &options {
-                            option_row(opts, o, ui, &colormaps);
+                            option_row(opts, o, ui, &colormaps, lang);
                         }
                     });
             });
@@ -277,15 +282,19 @@ fn options_panel(app: &mut GuiApp, ui: &mut Ui) {
         if ui
             .add_enabled(
                 app.worker_ready(),
-                egui::Button::new(if stale { "Render (changed)" } else { "Render" }),
+                egui::Button::new(lang.t(if stale {
+                    Msg::RenderChanged
+                } else {
+                    Msg::Render
+                })),
             )
             .clicked()
         {
             app.render_now();
         }
         if ui
-            .button("CLI defaults")
-            .on_hover_text("Every option of this view back to the CLI's default")
+            .button(lang.t(Msg::CliDefaults))
+            .on_hover_text(lang.t(Msg::CliDefaultsTip))
             .clicked()
             && let Some(o) = app.options.get_mut(&view)
         {
@@ -298,43 +307,39 @@ fn options_panel(app: &mut GuiApp, ui: &mut Ui) {
         }
     });
     if view == View::Scope {
-        ui.label(
-            RichText::new("Speed, frame rate and the shown line are set above the plot.").weak(),
-        );
+        ui.label(RichText::new(lang.t(Msg::ScopeControlsNote)).weak());
     }
 }
 
 fn data_section(app: &mut GuiApp, ui: &mut Ui) {
+    let lang = app.lang;
     let Some(file) = app.file.clone() else { return };
     let view_has_channel = app.options.get(&app.view).is_some_and(|o| o.has("channel"));
+    let default_channel = lang.f(Msg::ChannelDefault, &[("channel", &file.default_channel)]);
     egui::Grid::new("data_grid")
         .num_columns(2)
         .spacing([8.0, 6.0])
         .show(ui, |ui| {
-            ui.label("Channel");
+            ui.label(lang.t(Msg::Channel));
             ui.add_enabled_ui(view_has_channel, |ui| {
                 let shown = app
                     .channel
                     .clone()
-                    .unwrap_or_else(|| format!("{} (default)", file.default_channel));
+                    .unwrap_or_else(|| default_channel.clone());
                 egui::ComboBox::from_id_salt("channel")
                     .selected_text(shown)
                     .show_ui(ui, |ui| {
-                        ui.selectable_value(
-                            &mut app.channel,
-                            None,
-                            format!("{} (default)", file.default_channel),
-                        );
+                        ui.selectable_value(&mut app.channel, None, default_channel.clone());
                         for c in &file.channels {
                             ui.selectable_value(&mut app.channel, Some(c.clone()), c);
                         }
                     });
             })
             .response
-            .on_disabled_hover_text("The CLI's info always describes the default channel.");
+            .on_disabled_hover_text(lang.t(Msg::ChannelInfoNote));
             ui.end_row();
 
-            ui.label("Unit");
+            ui.label(lang.t(Msg::Unit));
             ui.vertical(|ui| {
                 let units = app
                     .hello
@@ -344,18 +349,14 @@ fn data_section(app: &mut GuiApp, ui: &mut Ui) {
                 for u in units {
                     let avail = file.units.iter().find(|a| a.name == u.name);
                     let ok = avail.is_none_or(|a| a.available);
-                    let text = match (&u.unit, u.name.as_str()) {
-                        (_, "rad") => "As stored".to_string(),
-                        (Some(unit), _) => format!("{} ({unit})", u.quantity),
-                        (None, _) => u.quantity.clone(),
-                    };
+                    let text = cli_text::unit_choice(lang, &u.name, &u.quantity, u.unit.as_deref());
                     let r = ui.add_enabled(ok, egui::RadioButton::new(app.unit == u.name, text));
                     let r = match &u.flag {
-                        Some(flag) => r.on_hover_text(format!("The CLI's {flag}")),
-                        None => r.on_hover_text("The samples as the file stores them"),
+                        Some(flag) => r.on_hover_text(lang.f(Msg::UnitFlagTip, &[("flag", flag)])),
+                        None => r.on_hover_text(lang.t(Msg::UnitStoredTip)),
                     };
-                    let r = match avail.and_then(|a| a.reason.clone()) {
-                        Some(reason) => r.on_disabled_hover_text(reason),
+                    let r = match avail.and_then(|a| a.reason_text()) {
+                        Some(reason) => r.on_disabled_hover_text(render_worker(lang, &reason)),
                         None => r,
                     };
                     if r.clicked() {
@@ -368,31 +369,39 @@ fn data_section(app: &mut GuiApp, ui: &mut Ui) {
     ui.separator();
 }
 
-fn option_label(ui: &mut Ui, o: &OptionSchema, is_default: bool) {
-    let text = params::humanize(&o.dest);
+fn option_label(ui: &mut Ui, o: &OptionSchema, is_default: bool, lang: Lang) {
+    let text = cli_text::option_name(lang, &o.dest);
     let rich = if is_default {
         RichText::new(text)
     } else {
         RichText::new(text).strong()
     };
-    ui.label(rich)
-        .on_hover_text(format!("{}\n\nCLI: {}", o.help, o.flag));
+    ui.label(rich).on_hover_text(lang.f(
+        Msg::OptionTip,
+        &[("help", &cli_text::help(lang, &o.help)), ("flag", &o.flag)],
+    ));
 }
 
 /// One option: a checkbox, a number (optionally "auto"), a choice or text.
-fn option_row(opts: &mut params::ViewOptions, o: &OptionSchema, ui: &mut Ui, colormaps: &[String]) {
+fn option_row(
+    opts: &mut params::ViewOptions,
+    o: &OptionSchema,
+    ui: &mut Ui,
+    colormaps: &[String],
+    lang: Lang,
+) {
     let is_default = opts.is_default(&o.dest);
-    option_label(ui, o, is_default);
+    option_label(ui, o, is_default, lang);
     let current = opts.get(&o.dest).clone();
     let new = match o.kind {
         OptionKind::Flag => {
             let mut b = current.as_bool().unwrap_or(false);
             ui.checkbox(&mut b, "").changed().then(|| json!(b))
         }
-        OptionKind::Int | OptionKind::Float => number_edit(ui, o, &current),
-        OptionKind::Choice => choice_edit(ui, o, &current),
-        OptionKind::Str if o.dest == "cmap" => cmap_edit(ui, &current, colormaps),
-        OptionKind::Str => text_edit(ui, o, &current),
+        OptionKind::Int | OptionKind::Float => number_edit(ui, o, &current, lang),
+        OptionKind::Choice => choice_edit(ui, o, &current, lang),
+        OptionKind::Str if o.dest == "cmap" => cmap_edit(ui, &current, colormaps, lang),
+        OptionKind::Str => text_edit(ui, o, &current, lang),
     };
     if let Some(v) = new {
         opts.set(&o.dest, v);
@@ -400,7 +409,39 @@ fn option_row(opts: &mut params::ViewOptions, o: &OptionSchema, ui: &mut Ui, col
     ui.end_row();
 }
 
-fn number_edit(ui: &mut Ui, o: &OptionSchema, current: &Value) -> Option<Value> {
+/// A number field in `lang`: in French a decimal comma, and typing takes a
+/// comma or a point. Only the writing changes: the value is the same number
+/// (what the CLI gets is a JSON number).
+fn localized(dv: egui::DragValue<'_>, lang: Lang) -> egui::DragValue<'_> {
+    match lang {
+        Lang::En => dv,
+        Lang::Fr => dv
+            .custom_formatter(move |v, decimals| {
+                i18n::localize_number(
+                    lang,
+                    &egui::emath::format_with_decimals_in_range(v, decimals),
+                )
+            })
+            .custom_parser(parse_typed_number),
+    }
+}
+
+/// A number typed in a French field: egui's own rules (blanks ignored, `−`
+/// as a minus) with a decimal comma or point.
+fn parse_typed_number(text: &str) -> Option<f64> {
+    let t: String = text
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .map(|c| match c {
+            '−' => '-',
+            ',' => '.',
+            c => c,
+        })
+        .collect();
+    t.parse().ok()
+}
+
+fn number_edit(ui: &mut Ui, o: &OptionSchema, current: &Value, lang: Lang) -> Option<Value> {
     let optional = o.default.is_null() && !o.required;
     let mut out = None;
     ui.horizontal(|ui| {
@@ -408,7 +449,7 @@ fn number_edit(ui: &mut Ui, o: &OptionSchema, current: &Value) -> Option<Value> 
         if optional
             && ui
                 .checkbox(&mut set, "")
-                .on_hover_text("Unchecked: the CLI's default (auto)")
+                .on_hover_text(lang.t(Msg::AutoTip))
                 .changed()
         {
             out = Some(if set {
@@ -424,11 +465,11 @@ fn number_edit(ui: &mut Ui, o: &OptionSchema, current: &Value) -> Option<Value> 
                 OptionKind::Int => dv.speed(1.0).max_decimals(0).range(int_range(&o.dest)),
                 _ => dv.speed(drag_speed(&o.dest)).max_decimals(6),
             };
-            if ui.add(dv).changed() {
+            if ui.add(localized(dv, lang)).changed() {
                 out = Some(params::number(o.kind, x));
             }
         } else {
-            ui.label(RichText::new("auto").weak());
+            ui.label(RichText::new(lang.t(Msg::Auto)).weak());
         }
     });
     out
@@ -462,10 +503,12 @@ fn drag_speed(dest: &str) -> f64 {
     }
 }
 
-fn choice_edit(ui: &mut Ui, o: &OptionSchema, current: &Value) -> Option<Value> {
+/// A choice of the CLI: its values are the CLI's own (`mean`, `hann`, `log`).
+fn choice_edit(ui: &mut Ui, o: &OptionSchema, current: &Value, lang: Lang) -> Option<Value> {
     let choices = o.choices.clone().unwrap_or_default();
+    let off = lang.t(Msg::Off);
     let text = |v: &Value| match v {
-        Value::Null => "off".to_string(),
+        Value::Null => off.to_string(),
         Value::String(s) => s.clone(),
         other => other.to_string(),
     };
@@ -474,7 +517,7 @@ fn choice_edit(ui: &mut Ui, o: &OptionSchema, current: &Value) -> Option<Value> 
         .selected_text(text(&selected))
         .show_ui(ui, |ui| {
             if o.default.is_null() {
-                ui.selectable_value(&mut selected, Value::Null, "off");
+                ui.selectable_value(&mut selected, Value::Null, off);
             }
             for c in &choices {
                 ui.selectable_value(&mut selected, c.clone(), text(c));
@@ -483,14 +526,15 @@ fn choice_edit(ui: &mut Ui, o: &OptionSchema, current: &Value) -> Option<Value> 
     (&selected != current).then_some(selected)
 }
 
-fn cmap_edit(ui: &mut Ui, current: &Value, colormaps: &[String]) -> Option<Value> {
+fn cmap_edit(ui: &mut Ui, current: &Value, colormaps: &[String], lang: Lang) -> Option<Value> {
     let mut selected = current.clone();
-    let shown = current.as_str().unwrap_or("auto (CLI default)").to_string();
+    let auto = lang.t(Msg::AutoCliDefault);
+    let shown = current.as_str().unwrap_or(auto).to_string();
     egui::ComboBox::from_id_salt("cmap")
         .selected_text(shown)
         .height(400.0)
         .show_ui(ui, |ui| {
-            ui.selectable_value(&mut selected, Value::Null, "auto (CLI default)");
+            ui.selectable_value(&mut selected, Value::Null, auto);
             for name in colormaps {
                 ui.selectable_value(&mut selected, json!(name), name);
             }
@@ -498,11 +542,11 @@ fn cmap_edit(ui: &mut Ui, current: &Value, colormaps: &[String]) -> Option<Value
     (&selected != current).then_some(selected)
 }
 
-fn text_edit(ui: &mut Ui, o: &OptionSchema, current: &Value) -> Option<Value> {
+fn text_edit(ui: &mut Ui, o: &OptionSchema, current: &Value, lang: Lang) -> Option<Value> {
     let mut s = current.as_str().map(str::to_string).unwrap_or_default();
     let r = ui.add(
         egui::TextEdit::singleline(&mut s)
-            .hint_text("default")
+            .hint_text(lang.t(Msg::DefaultHint))
             .desired_width(140.0),
     );
     r.changed().then(|| {
@@ -514,7 +558,12 @@ fn text_edit(ui: &mut Ui, o: &OptionSchema, current: &Value) -> Option<Value> {
     })
 }
 
-fn fft_positions(opts: &mut params::ViewOptions, ui: &mut Ui, summary: &crate::protocol::Summary) {
+fn fft_positions(
+    opts: &mut params::ViewOptions,
+    ui: &mut Ui,
+    summary: &crate::protocol::Summary,
+    lang: Lang,
+) {
     #[derive(PartialEq, Clone, Copy)]
     enum Mode {
         Whole,
@@ -531,16 +580,17 @@ fn fft_positions(opts: &mut params::ViewOptions, ui: &mut Ui, summary: &crate::p
         Mode::Whole
     };
     let mut chosen = mode;
-    ui.label("Where");
+    ui.label(lang.t(Msg::Where));
     ui.vertical(|ui| {
-        ui.radio_value(&mut chosen, Mode::Whole, "Whole fibre (average)");
-        ui.radio_value(&mut chosen, Mode::List, "Positions (m)")
-            .on_hover_text("'12.5' or '10,20,30': one curve per position");
-        ui.radio_value(&mut chosen, Mode::Range, "Range (m)")
-            .on_hover_text("'50:100': averaged");
+        ui.radio_value(&mut chosen, Mode::Whole, lang.t(Msg::WholeFibre));
+        ui.radio_value(&mut chosen, Mode::List, lang.t(Msg::PositionsMetres))
+            .on_hover_text(lang.t(Msg::PositionsTip));
+        ui.radio_value(&mut chosen, Mode::Range, lang.t(Msg::RangeMetres))
+            .on_hover_text(lang.t(Msg::RangeTip));
     });
     ui.end_row();
     if chosen != mode {
+        // CLI values: a decimal point whatever the language.
         let mid = fmt_g((summary.positions / 2) as f64 * summary.step_m, 6);
         let (p, r) = match chosen {
             Mode::Whole => (Value::Null, Value::Null),
@@ -560,8 +610,8 @@ fn fft_positions(opts: &mut params::ViewOptions, ui: &mut Ui, summary: &crate::p
         let Some(o) = opts.schema.option(dest).cloned() else {
             continue;
         };
-        option_label(ui, &o, false);
-        if let Some(v) = text_edit(ui, &o, &opts.get(dest).clone()) {
+        option_label(ui, &o, false, lang);
+        if let Some(v) = text_edit(ui, &o, &opts.get(dest).clone(), lang) {
             opts.set(dest, if v.is_null() { json!("") } else { v });
         }
         ui.end_row();
@@ -572,6 +622,7 @@ fn inspect_location(
     opts: &mut params::ViewOptions,
     ui: &mut Ui,
     summary: &crate::protocol::Summary,
+    lang: Lang,
 ) {
     #[derive(PartialEq, Clone, Copy)]
     enum Mode {
@@ -587,11 +638,11 @@ fn inspect_location(
         Mode::Middle
     };
     let mut chosen = mode;
-    ui.label("Where");
+    ui.label(lang.t(Msg::Where));
     ui.vertical(|ui| {
-        ui.radio_value(&mut chosen, Mode::Middle, "Middle of the fibre");
-        ui.radio_value(&mut chosen, Mode::Index, "Index");
-        ui.radio_value(&mut chosen, Mode::Position, "Position (m)");
+        ui.radio_value(&mut chosen, Mode::Middle, lang.t(Msg::MiddleOfFibre));
+        ui.radio_value(&mut chosen, Mode::Index, lang.t(Msg::IndexChoice));
+        ui.radio_value(&mut chosen, Mode::Position, lang.t(Msg::PositionMetres));
     });
     ui.end_row();
     if chosen != mode {
@@ -611,7 +662,7 @@ fn inspect_location(
         let Some(o) = opts.schema.option(dest).cloned() else {
             continue;
         };
-        option_label(ui, &o, false);
+        option_label(ui, &o, false, lang);
         let mut x = opts.get(dest).as_f64().unwrap_or(0.0);
         let dv = if o.kind == OptionKind::Int {
             egui::DragValue::new(&mut x)
@@ -624,7 +675,7 @@ fn inspect_location(
                 .range(0.0..=summary.length_m)
                 .suffix(" m")
         };
-        if ui.add(dv).changed() {
+        if ui.add(localized(dv, lang)).changed() {
             opts.set(dest, params::number(o.kind, x));
         }
         ui.end_row();
@@ -634,12 +685,13 @@ fn inspect_location(
 // --- Central view -------------------------------------------------------------
 
 fn central(app: &mut GuiApp, ui: &mut Ui) {
+    let lang = app.lang;
     notices(app, ui);
     if let WorkerState::Failed(why) = &app.worker_state {
-        let why = why.clone();
+        let why = why.render(lang);
         ui.add_space(12.0);
         ui.label(
-            RichText::new("The Python worker could not run")
+            RichText::new(lang.t(Msg::WorkerCouldNotRun))
                 .heading()
                 .color(ERROR_COLOR),
         );
@@ -649,11 +701,11 @@ fn central(app: &mut GuiApp, ui: &mut Ui) {
         });
         ui.add_space(6.0);
         ui.horizontal(|ui| {
-            if ui.button("Settings…").clicked() {
+            if ui.button(lang.t(Msg::SettingsEllipsis)).clicked() {
                 app.show_settings = true;
                 app.interpreter_input = app.settings.interpreter.clone();
             }
-            if ui.button("Restart the worker").clicked() {
+            if ui.button(lang.t(Msg::RestartWorker)).clicked() {
                 app.restart_worker();
             }
         });
@@ -661,12 +713,7 @@ fn central(app: &mut GuiApp, ui: &mut Ui) {
     }
     let Some(file) = &app.file else {
         ui.centered_and_justified(|ui| {
-            ui.label(
-                RichText::new(
-                    "Open a recording (Open…, a path above, or drop a file on the window).",
-                )
-                .size(16.0),
-            );
+            ui.label(RichText::new(lang.t(Msg::OpenPrompt)).size(16.0));
         });
         return;
     };
@@ -675,19 +722,19 @@ fn central(app: &mut GuiApp, ui: &mut Ui) {
 
     if let Some((_, e)) = app.errors.get(&view).cloned() {
         let (title, color) = match e.kind.as_str() {
-            "audace" => ("The CLI refuses these options", WARNING_COLOR),
-            "options" => ("Invalid option", WARNING_COLOR),
-            "cancelled" => ("Cancelled", ui.visuals().weak_text_color()),
-            "file" => ("File error", ERROR_COLOR),
-            _ => ("Error", ERROR_COLOR),
+            "audace" => (Msg::ErrRefused, WARNING_COLOR),
+            "options" => (Msg::ErrInvalidOption, WARNING_COLOR),
+            "cancelled" => (Msg::ErrCancelled, ui.visuals().weak_text_color()),
+            "file" => (Msg::ErrFile, ERROR_COLOR),
+            _ => (Msg::ErrOther, ERROR_COLOR),
         };
         egui::Frame::group(ui.style())
             .stroke(egui::Stroke::new(1.0, color))
             .show(ui, |ui| {
-                ui.label(RichText::new(title).strong().color(color));
-                ui.label(&e.message);
+                ui.label(RichText::new(lang.t(title)).strong().color(color));
+                ui.label(render_worker(lang, &e.text()));
                 if (e.kind == "cancelled" || e.kind == "internal")
-                    && ui.button("Render again").clicked()
+                    && ui.button(lang.t(Msg::RenderAgain)).clicked()
                 {
                     app.render_now();
                 }
@@ -699,12 +746,16 @@ fn central(app: &mut GuiApp, ui: &mut Ui) {
     }
     if !app.warnings.is_empty() {
         egui::CollapsingHeader::new(
-            RichText::new(format!("{} warning(s)", app.warnings.len())).color(WARNING_COLOR),
+            RichText::new(lang.f(
+                Msg::WarningCount,
+                &[("count", &app.warnings.len().to_string())],
+            ))
+            .color(WARNING_COLOR),
         )
         .id_salt("warnings")
         .show(ui, |ui| {
             for w in &app.warnings {
-                ui.label(RichText::new(w).color(WARNING_COLOR));
+                ui.label(RichText::new(render_worker(lang, w)).color(WARNING_COLOR));
             }
         });
     }
@@ -715,16 +766,16 @@ fn central(app: &mut GuiApp, ui: &mut Ui) {
             if app.busy() {
                 ui.spinner();
             } else {
-                ui.label(format!("{} of {name}: press Render.", view.label()));
+                ui.label(lang.f(
+                    Msg::PressRender,
+                    &[("view", view.label(lang)), ("name", &name)],
+                ));
             }
         });
         return;
     }
     if stale && !app.busy() && !app.render_pending() && !app.settings.auto_render {
-        ui.label(
-            RichText::new("The options changed: press Render to update the view.")
-                .color(WARNING_COLOR),
-        );
+        ui.label(RichText::new(lang.t(Msg::OptionsChanged)).color(WARNING_COLOR));
     }
 
     match view {
@@ -739,6 +790,7 @@ fn central(app: &mut GuiApp, ui: &mut Ui) {
 }
 
 fn notices(app: &mut GuiApp, ui: &mut Ui) {
+    let lang = app.lang;
     let mut close = None;
     for (i, n) in app.notices.iter().enumerate() {
         let color = match n.level {
@@ -750,7 +802,7 @@ fn notices(app: &mut GuiApp, ui: &mut Ui) {
             if ui.small_button("✕").clicked() {
                 close = Some(i);
             }
-            ui.label(RichText::new(&n.text).color(color));
+            ui.label(RichText::new(n.text.render(lang)).color(color));
         });
     }
     if let Some(i) = close {
@@ -767,12 +819,14 @@ fn title(ui: &mut Ui, text: &str) {
 }
 
 fn info_view(app: &mut GuiApp, ui: &mut Ui) {
+    let lang = app.lang;
     let Some(file) = &app.file else { return };
     let s = &file.summary;
     let text = match app.results.get(&View::Info) {
         Some((_, ViewResult::Info(t))) => t.clone(),
         _ => file.info_text.clone(),
     };
+    let text = cli_text::info(lang, &text);
     ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
@@ -782,60 +836,74 @@ fn info_view(app: &mut GuiApp, ui: &mut Ui) {
                 .striped(true)
                 .spacing([16.0, 4.0])
                 .show(ui, |ui| {
-                    let mut row = |k: &str, v: String| {
-                        ui.label(RichText::new(k).strong());
+                    let mut row = |k: Msg, v: String| {
+                        ui.label(RichText::new(lang.t(k)).strong());
                         ui.label(v);
                         ui.end_row();
                     };
-                    row("Mode", s.mode.clone());
+                    row(Msg::InfoMode, s.mode.clone());
                     if s.content_type != 0 {
                         row(
-                            "Content type",
+                            Msg::InfoContentType,
                             format!("{} ({})", s.content_type_name, s.content_type),
                         );
                     }
                     if let Some(q) = &s.quantity {
-                        row("Quantity", q.clone());
+                        row(Msg::InfoQuantity, cli_text::quantity(lang, q));
                     }
                     row(
-                        "Gauge length",
+                        Msg::InfoGauge,
                         s.gauge_length_m
-                            .map_or("not recorded".into(), |g| format!("{} m", fmt_g(g, 6))),
-                    );
-                    row("Trigger frequency", s.trig_frequency.clone());
-                    row(
-                        "Line rate used",
-                        format!("{} Hz", fmt_g(s.line_rate_hz, 10)),
+                            .map_or(lang.t(Msg::NotRecorded).into(), |g| {
+                                format!("{} m", num(lang, g, 6))
+                            }),
                     );
                     row(
-                        "Time correction",
+                        Msg::InfoTrigger,
+                        cli_text::trig_frequency(lang, &s.trig_frequency),
+                    );
+                    row(
+                        Msg::InfoLineRate,
+                        format!("{} Hz", num(lang, s.line_rate_hz, 10)),
+                    );
+                    row(
+                        Msg::InfoTimeCorrection,
                         s.time_correction
-                            .clone()
-                            .unwrap_or_else(|| "none recorded".into()),
+                            .as_deref()
+                            .map(|t| cli_text::time_correction(lang, t))
+                            .unwrap_or_else(|| lang.t(Msg::NoneRecorded).into()),
                     );
-                    row("Start", s.start_time.clone());
-                    row("Pulses", group(s.num_lines));
-                    row("Duration", format!("{} s", fmt_g(s.duration_s, 7)));
+                    row(Msg::InfoStart, cli_text::timestamp(lang, &s.start_time));
+                    row(Msg::InfoPulses, count(lang, s.num_lines));
                     row(
-                        "Positions",
-                        format!(
-                            "{} x {} m = {} m",
-                            group(s.positions),
-                            fmt_g(s.step_m, 6),
-                            fmt_g(s.length_m, 7)
+                        Msg::InfoDuration,
+                        format!("{} s", num(lang, s.duration_s, 7)),
+                    );
+                    row(
+                        Msg::InfoPositions,
+                        lang.f(
+                            Msg::InfoPositionsValue,
+                            &[
+                                ("count", &count(lang, s.positions)),
+                                ("step", &num(lang, s.step_m, 6)),
+                                ("length", &num(lang, s.length_m, 7)),
+                            ],
                         ),
                     );
                     if let Some(c) = &s.compression {
-                        row("Compression", c.clone());
+                        row(Msg::InfoCompression, cli_text::compression(lang, c));
                     }
                     let channels = file.channels.join(", ");
                     row(
-                        "Channels",
-                        format!("{channels} (default {})", file.default_channel),
+                        Msg::InfoChannels,
+                        lang.f(
+                            Msg::InfoChannelsValue,
+                            &[("channels", &channels), ("default", &file.default_channel)],
+                        ),
                     );
                 });
             ui.add_space(10.0);
-            ui.label(RichText::new("audace-display info").strong());
+            ui.label(RichText::new(lang.t(Msg::InfoCliText)).strong());
             let mut t = text.as_str();
             ui.add(
                 egui::TextEdit::multiline(&mut t)
@@ -845,32 +913,49 @@ fn info_view(app: &mut GuiApp, ui: &mut Ui) {
         });
 }
 
+/// Under a zoomable plot: the zoom (or how to zoom) on the left, the
+/// readout of the pointer on the right. The readout has priority: the left
+/// side gets the width that remains, its text cut with an ellipsis (shown
+/// whole in its tooltip), so the two never overlap, in any language.
 fn zoom_bar(app: &mut GuiApp, ui: &mut Ui, readout: Option<String>) {
-    ui.horizontal(|ui| {
-        if let Some(z) = app.zoom.get(&app.view) {
-            let text = match (z.d0, z.d1) {
-                (Some(d0), Some(d1)) => format!(
-                    "Zoom: {}–{} s, {}–{} m",
-                    fmt_g(z.t0, 6),
-                    fmt_g(z.t1, 6),
-                    fmt_g(d0, 6),
-                    fmt_g(d1, 6)
-                ),
-                _ => format!("Zoom: {}–{} s", fmt_g(z.t0, 6), fmt_g(z.t1, 6)),
-            };
-            ui.label(text);
-            if ui.button("Reset zoom").clicked() {
-                app.reset_zoom();
+    let lang = app.lang;
+    let zoom = app.zoom.get(&app.view).copied();
+    let mut reset = false;
+    egui::Sides::new().shrink_left().truncate().show(
+        ui,
+        |ui| match zoom {
+            Some(z) => {
+                if ui.button(lang.t(Msg::ResetZoom)).clicked() {
+                    reset = true;
+                }
+                let (t0, t1) = (num(lang, z.t0, 6), num(lang, z.t1, 6));
+                let text = match (z.d0, z.d1) {
+                    (Some(d0), Some(d1)) => lang.f(
+                        Msg::ZoomWindow,
+                        &[
+                            ("t0", &t0),
+                            ("t1", &t1),
+                            ("d0", &num(lang, d0, 6)),
+                            ("d1", &num(lang, d1, 6)),
+                        ],
+                    ),
+                    _ => lang.f(Msg::ZoomTime, &[("t0", &t0), ("t1", &t1)]),
+                };
+                ui.label(text);
             }
-        } else {
-            ui.label(RichText::new("Ctrl+scroll to zoom, right-drag a box, drag or scroll to pan, double-click to reset: the window is recomputed.").weak());
-        }
-        if let Some(r) = readout {
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            None => {
+                ui.label(RichText::new(lang.t(Msg::ZoomHint)).weak());
+            }
+        },
+        |ui| {
+            if let Some(r) = readout {
                 ui.monospace(r);
-            });
-        }
-    });
+            }
+        },
+    );
+    if reset {
+        app.reset_zoom();
+    }
 }
 
 /// Turns plot bounds the user settled on into the zoom window of a view.
@@ -901,39 +986,45 @@ fn apply_zoom(app: &mut GuiApp, bounds: [f64; 4], with_distance: bool) {
 }
 
 fn heatmap_view(app: &mut GuiApp, ui: &mut Ui) {
+    let lang = app.lang;
     let Some((_, ViewResult::Heatmap(img))) = app.results.get(&View::Heatmap) else {
         return;
     };
-    title(ui, &img.title);
+    title(ui, &cli_text::title(lang, View::Heatmap, &img.title));
+    let label = cli_text::quantity(lang, &img.label);
     let mut nav = app.nav.remove(&View::Heatmap).unwrap_or_default();
     let fit = std::mem::take(&mut nav.fit);
     let avail = ui.available_size();
     let plot_size = vec2((avail.x - 100.0).max(200.0), (avail.y - 30.0).max(200.0));
     let mut outcome = Default::default();
     ui.horizontal(|ui| {
-        outcome = plots::heatmap(ui, "heatmap", img, &mut nav, fit, None, plot_size);
-        plots::colorbar(ui, img, plot_size.y);
+        outcome = plots::heatmap(
+            ui, "heatmap", img, &label, &mut nav, fit, None, plot_size, lang,
+        );
+        plots::colorbar(ui, img, &label, plot_size.y, lang);
     });
-    let readout = hover_readout(&outcome, &img.label);
-    let info = format!(
-        "{} x {} bins",
-        group(img.rows as u64),
-        group(img.cols as u64)
+    let readout = hover_readout(&outcome, &label, lang);
+    let info = lang.f(
+        Msg::Bins,
+        &[
+            ("rows", &count(lang, img.rows as u64)),
+            ("cols", &count(lang, img.cols as u64)),
+        ],
     );
     app.nav.insert(View::Heatmap, nav);
     zoom_bar(app, ui, Some(format!("{readout}   ({info})")));
     after_zoomable(app, outcome, true);
 }
 
-fn hover_readout(outcome: &plots::PlotOutcome, label: &str) -> String {
+fn hover_readout(outcome: &plots::PlotOutcome, label: &str, lang: Lang) -> String {
     match outcome.hover {
         Some((d, t, Some(v))) => format!(
             "t = {} s   d = {} m   {label} = {}",
-            fmt_g(t, 6),
-            fmt_g(d, 6),
-            fmt_g(v as f64, 5)
+            num(lang, t, 6),
+            num(lang, d, 6),
+            num(lang, v as f64, 5)
         ),
-        Some((d, t, None)) => format!("t = {} s   d = {} m", fmt_g(t, 6), fmt_g(d, 6)),
+        Some((d, t, None)) => format!("t = {} s   d = {} m", num(lang, t, 6), num(lang, d, 6)),
         None => String::new(),
     }
 }
@@ -947,6 +1038,7 @@ fn after_zoomable(app: &mut GuiApp, outcome: plots::PlotOutcome, with_distance: 
 }
 
 fn bands_view(app: &mut GuiApp, ui: &mut Ui) {
+    let lang = app.lang;
     let Some((
         _,
         ViewResult::Bands {
@@ -957,7 +1049,7 @@ fn bands_view(app: &mut GuiApp, ui: &mut Ui) {
     else {
         return;
     };
-    title(ui, suptitle);
+    title(ui, &cli_text::title(lang, View::Bands, suptitle));
     let n = panels.len();
     let ncols = if n == 1 {
         1
@@ -979,8 +1071,9 @@ fn bands_view(app: &mut GuiApp, ui: &mut Ui) {
         .spacing([6.0, 4.0])
         .show(ui, |ui| {
             for (i, img) in panels.iter().enumerate() {
+                let label = cli_text::quantity(lang, &img.label);
                 ui.vertical(|ui| {
-                    ui.label(RichText::new(&img.title).strong());
+                    ui.label(RichText::new(cli_text::panel_title(lang, &img.title)).strong());
                     ui.horizontal(|ui| {
                         // Panel 0 follows the zoom; the others are linked to it.
                         let mut scratch = crate::app::PlotNav::default();
@@ -989,19 +1082,21 @@ fn bands_view(app: &mut GuiApp, ui: &mut Ui) {
                             ui,
                             &format!("band{i}"),
                             img,
+                            &label,
                             nav_i,
                             fit,
                             Some("bands"),
                             plot_size,
+                            lang,
                         );
                         if o.hover.is_some() {
-                            readout = hover_readout(&o, &img.label);
+                            readout = hover_readout(&o, &label, lang);
                         }
                         if i == 0 {
                             outcome.new_bounds = o.new_bounds;
                         }
                         outcome.reset |= o.reset;
-                        plots::colorbar(ui, img, plot_size.y);
+                        plots::colorbar(ui, img, &label, plot_size.y, lang);
                     });
                 });
                 if (i + 1) % ncols == 0 {
@@ -1015,17 +1110,25 @@ fn bands_view(app: &mut GuiApp, ui: &mut Ui) {
 }
 
 fn fft_view(app: &mut GuiApp, ui: &mut Ui) {
+    let lang = app.lang;
     let serial = app.result_serial;
     let Some((_, ViewResult::Fft(r))) = app.results.get(&View::Fft) else {
         return;
     };
-    title(ui, &r.meta.title);
+    title(ui, &cli_text::title(lang, View::Fft, &r.meta.title));
     let mut nav = app.nav.remove(&View::Fft).unwrap_or_default();
     let fit = std::mem::take(&mut nav.fit);
+    // A curve per position is named `12.5 m`: its number the language's way.
+    let names: Vec<Option<String>> = r
+        .curves
+        .iter()
+        .map(|c| c.label.as_deref().map(|l| fft_curve_name(lang, l)))
+        .collect();
     let curves: Vec<(Option<&str>, &[f64], &[f64])> = r
         .curves
         .iter()
-        .map(|c| (c.label.as_deref(), c.x.as_slice(), c.y.as_slice()))
+        .zip(&names)
+        .map(|(c, n)| (n.as_deref(), c.x.as_slice(), c.y.as_slice()))
         .collect();
     let x1 = r.meta.fmax.unwrap_or_else(|| {
         r.curves
@@ -1040,25 +1143,35 @@ fn fft_view(app: &mut GuiApp, ui: &mut Ui) {
     let size = ui.available_size() - vec2(0.0, 6.0);
     LinePlot {
         id: format!("fft-{serial}"),
-        x_label: format!(
-            "Frequency (Hz)   --   Nyquist = {} Hz",
-            fmt_g(r.meta.nyquist.round(), 10)
+        x_label: lang.f(
+            Msg::AxisFrequencyNyquist,
+            &[("nyquist", &num(lang, r.meta.nyquist.round(), 10))],
         ),
-        y_label: r.meta.y_label.clone(),
+        y_label: cli_text::quantity(lang, &r.meta.y_label),
         curves,
         fit_bounds,
         log_y: false,
         marker: None,
+        lang,
     }
     .show(ui, size);
     app.nav.insert(View::Fft, nav);
 }
 
+/// `12.5 m` (the CLI's name of a curve) with its number in `lang`.
+fn fft_curve_name(lang: Lang, label: &str) -> String {
+    match label.strip_suffix(" m") {
+        Some(n) => format!("{} m", i18n::localize_number(lang, n)),
+        None => label.to_string(),
+    }
+}
+
 fn trace_view(app: &mut GuiApp, ui: &mut Ui) {
+    let lang = app.lang;
     let Some((_, ViewResult::Trace(r))) = app.results.get(&View::Trace) else {
         return;
     };
-    title(ui, &r.meta.title);
+    title(ui, &cli_text::title(lang, View::Trace, &r.meta.title));
     let mut nav = app.nav.remove(&View::Trace).unwrap_or_default();
     let fit = std::mem::take(&mut nav.fit);
     let size = ui.available_size() - vec2(0.0, 30.0);
@@ -1067,23 +1180,28 @@ fn trace_view(app: &mut GuiApp, ui: &mut Ui) {
         &r.times,
         &r.lo,
         &r.hi,
-        &r.meta.label,
+        &cli_text::quantity(lang, &r.meta.label),
         &mut nav,
         fit,
         size,
+        lang,
     );
-    let points = format!("{} points", group(r.times.len() as u64));
+    let points = lang.f(
+        Msg::Points,
+        &[("count", &count(lang, r.times.len() as u64))],
+    );
     app.nav.insert(View::Trace, nav);
     zoom_bar(app, ui, Some(points));
     after_zoomable(app, outcome, false);
 }
 
 fn inspect_view(app: &mut GuiApp, ui: &mut Ui) {
+    let lang = app.lang;
     let serial = app.result_serial;
     let Some((_, ViewResult::Inspect(r))) = app.results.get(&View::Inspect) else {
         return;
     };
-    title(ui, &r.meta.title);
+    title(ui, &cli_text::title(lang, View::Inspect, &r.meta.title));
     let mut nav = app.nav.remove(&View::Inspect).unwrap_or_default();
     let fit = std::mem::take(&mut nav.fit);
     let avail = ui.available_size();
@@ -1102,17 +1220,18 @@ fn inspect_view(app: &mut GuiApp, ui: &mut Ui) {
         });
         LinePlot {
             id: format!("inspect-wave-{serial}"),
-            x_label: "Time from selected start (s)".into(),
-            y_label: r.meta.y_label.clone(),
+            x_label: lang.t(Msg::AxisTimeFromStart).into(),
+            y_label: cli_text::quantity(lang, &r.meta.y_label),
             curves: vec![(None, &r.times, &r.waveform)],
             fit_bounds: fit_wave,
             log_y: false,
             marker: None,
+            lang,
         }
         .show(ui, wave_size);
         egui::Frame::group(ui.style()).show(ui, |ui| {
             ui.set_width(180.0);
-            ui.label(RichText::new(&r.meta.stats_text).monospace());
+            ui.label(RichText::new(cli_text::stats(lang, &r.meta.stats_text)).monospace());
         });
     });
     // The spectrum over f > 0 (and <= fmax), its dominant peak marked, as the CLI draws it.
@@ -1121,7 +1240,7 @@ fn inspect_view(app: &mut GuiApp, ui: &mut Ui) {
         .filter(|&i| r.freqs[i] > 0.0 && fmax.is_none_or(|m| r.freqs[i] <= m))
         .collect();
     if keep.is_empty() {
-        ui.label("FFT unavailable: signal too short");
+        ui.label(lang.t(Msg::FftUnavailable));
     } else {
         let fx: Vec<f64> = keep.iter().map(|&i| r.freqs[i]).collect();
         let fy: Vec<f64> = keep.iter().map(|&i| r.magnitude[i]).collect();
@@ -1129,19 +1248,19 @@ fn inspect_view(app: &mut GuiApp, ui: &mut Ui) {
         let log = r.meta.fft_log;
         let fit_fft =
             fit.then(|| plots::fit_curves(&[(&fx, &fy)], fx[0], *fx.last().unwrap(), log));
-        let label = r.meta.fft_y_label.clone();
         LinePlot {
             id: format!("inspect-fft-{serial}"),
-            x_label: "Frequency (Hz)".into(),
-            y_label: label,
+            x_label: lang.t(Msg::AxisFrequency).into(),
+            y_label: cli_text::quantity(lang, &r.meta.fft_y_label),
             curves: vec![(None, &fx, &fy)],
             fit_bounds: fit_fft,
             log_y: log,
             marker: Some((
                 fx[peak],
                 fy[peak],
-                format!("{} Hz", fmt_g((fx[peak] * 100.0).round() / 100.0, 8)),
+                format!("{} Hz", num(lang, (fx[peak] * 100.0).round() / 100.0, 8)),
             )),
+            lang,
         }
         .show(ui, vec2(avail.x, half));
     }
@@ -1149,35 +1268,37 @@ fn inspect_view(app: &mut GuiApp, ui: &mut Ui) {
 }
 
 fn scope_view(app: &mut GuiApp, ui: &mut Ui) {
+    let lang = app.lang;
     let now = Instant::now();
     let Some(player) = app.scope.as_mut() else {
-        ui.label("The oscilloscope session ended (the worker restarted): press Render.");
+        ui.label(lang.t(Msg::ScopeEnded));
         return;
     };
     let meta = player.result.meta.clone();
-    title(ui, &meta.title);
+    title(ui, &cli_text::title(lang, View::Scope, &meta.title));
     ui.horizontal(|ui| {
         let playing = player.playing;
         if ui
-            .button(if playing { "⏸ Pause" } else { "▶ Play" })
+            .button(lang.t(if playing { Msg::Pause } else { Msg::Play }))
             .clicked()
         {
             player.set_playing(!playing, now);
         }
-        ui.label("Speed");
+        ui.label(lang.t(Msg::Speed));
         let mut speed = player.speed;
         if ui
-            .add(
+            .add(localized(
                 egui::DragValue::new(&mut speed)
                     .speed(0.01)
                     .range(0.0001..=1000.0)
                     .max_decimals(4),
-            )
+                lang,
+            ))
             .changed()
         {
             player.set_speed(speed, now);
         }
-        ui.label("fps");
+        ui.label(lang.t(Msg::Fps));
         let mut fps = player.fps;
         if ui
             .add(
@@ -1197,23 +1318,25 @@ fn scope_view(app: &mut GuiApp, ui: &mut Ui) {
         } else {
             player.paused_local
         };
-        let slider = egui::Slider::new(&mut local, 0..=n - 1).text("line in the loop");
+        let slider = egui::Slider::new(&mut local, 0..=n - 1).text(lang.t(Msg::LineInLoop));
         if ui
             .add_enabled(!player.playing, slider)
-            .on_disabled_hover_text("Pause to choose a line")
+            .on_disabled_hover_text(lang.t(Msg::PauseToChoose))
             .changed()
         {
             player.paused_local = local;
         }
     });
     let f = &player.frame;
-    let readout = format!(
-        "line {} / {}   t = {} s   ({} lines/s x {})",
-        group(f.line),
-        group(meta.line_offset + meta.n_window),
-        fmt_g(f.t, 7),
-        fmt_g(meta.trig_freq, 10),
-        fmt_g(player.speed, 4)
+    let readout = lang.f(
+        Msg::ScopeReadout,
+        &[
+            ("line", &count(lang, f.line)),
+            ("total", &count(lang, meta.line_offset + meta.n_window)),
+            ("t", &num(lang, f.t, 7)),
+            ("rate", &num(lang, meta.trig_freq, 10)),
+            ("speed", &num(lang, player.speed, 4)),
+        ],
     );
     ui.monospace(readout);
     let [lo, hi] = meta.ylim;
@@ -1223,12 +1346,13 @@ fn scope_view(app: &mut GuiApp, ui: &mut Ui) {
     let size = ui.available_size() - vec2(0.0, 6.0);
     LinePlot {
         id: format!("scope-{}", meta.session),
-        x_label: "Distance (m)".into(),
-        y_label: meta.y_label.clone(),
+        x_label: lang.t(Msg::AxisDistance).into(),
+        y_label: cli_text::quantity(lang, &meta.y_label),
         curves: vec![(None, &f.x, &f.y)],
         fit_bounds: fit.then_some([0.0, lo, meta.length_m, hi]),
         log_y: false,
         marker: None,
+        lang,
     }
     .show(ui, size);
     app.nav.insert(View::Scope, nav);
@@ -1237,59 +1361,94 @@ fn scope_view(app: &mut GuiApp, ui: &mut Ui) {
 // --- Windows ------------------------------------------------------------------
 
 fn settings_window(app: &mut GuiApp, ctx: &egui::Context) {
+    let lang = app.lang;
     let mut open = app.show_settings;
-    egui::Window::new("Settings").open(&mut open).resizable(true).default_width(560.0).show(ctx, |ui| {
-        ui.label(RichText::new("Python interpreter").strong());
-        ui.label(
-            "The command that runs the Python where audace-display and invisensing are installed: \
-             `python3`, `py -3`, or the full path of a virtual environment's interpreter \
-             (quote a path with spaces).",
-        );
-        ui.horizontal(|ui| {
-            ui.add(egui::TextEdit::singleline(&mut app.interpreter_input).desired_width(360.0));
-            if ui.button("Apply and restart").clicked() {
-                let cmd = app.interpreter_input.trim().to_string();
-                match worker::split_command(&cmd) {
-                    Ok(_) => app.apply_interpreter(cmd),
-                    Err(e) => app.notify(Level::Error, e),
+    // A fixed id: the title changes with the language, the window stays.
+    egui::Window::new(lang.t(Msg::Settings))
+        .id(egui::Id::new("settings_window"))
+        .open(&mut open)
+        .resizable(true)
+        .default_width(560.0)
+        .show(ctx, |ui| {
+            ui.label(RichText::new(lang.t(Msg::Language)).strong());
+            ui.horizontal(|ui| {
+                let mut choice = app.settings.language;
+                let system = lang.f(
+                    Msg::LanguageSystem,
+                    &[("language", app.system_lang.native_name())],
+                );
+                ui.radio_value(&mut choice, None, system);
+                for l in Lang::ALL {
+                    ui.radio_value(&mut choice, Some(l), l.native_name());
                 }
+                if choice != app.settings.language {
+                    app.set_language(choice);
+                }
+            });
+            if app.startup.lang.is_some() {
+                ui.label(RichText::new(lang.t(Msg::LanguageNote)).weak());
             }
-            if ui.button("Default").clicked() {
-                app.interpreter_input = worker::default_interpreter().to_string();
+            ui.add_space(6.0);
+            ui.label(RichText::new(lang.t(Msg::PythonInterpreter)).strong());
+            ui.label(lang.t(Msg::PythonInterpreterHelp));
+            ui.horizontal(|ui| {
+                ui.add(egui::TextEdit::singleline(&mut app.interpreter_input).desired_width(360.0));
+                if ui.button(lang.t(Msg::ApplyRestart)).clicked() {
+                    let cmd = app.interpreter_input.trim().to_string();
+                    match worker::split_command(&cmd) {
+                        Ok(_) => app.apply_interpreter(cmd),
+                        Err(e) => app.notify(Level::Error, e),
+                    }
+                }
+                if ui.button(lang.t(Msg::DefaultButton)).clicked() {
+                    app.interpreter_input = worker::default_interpreter().to_string();
+                }
+            });
+            ui.label(
+                RichText::new(lang.f(Msg::Runs, &[("command", &app.worker_command())])).weak(),
+            );
+            if app.startup.python.is_some() {
+                ui.label(RichText::new(lang.t(Msg::PythonOverride)).weak());
+            }
+            ui.add_space(6.0);
+            ui.label(RichText::new(lang.t(Msg::InstallHeading)).strong());
+            let cmd = app.interpreter.clone();
+            let mut hint = format!(
+                "{cmd} -m pip install audace-display\n{}\n{cmd} -m pip install -e {}",
+                lang.t(Msg::InstallComment),
+                lang.t(Msg::CheckoutPlaceholder)
+            );
+            ui.add(
+                egui::TextEdit::multiline(&mut hint)
+                    .font(egui::TextStyle::Monospace)
+                    .desired_rows(3),
+            );
+            ui.add_space(6.0);
+            let mut auto = app.settings.auto_render;
+            if ui
+                .checkbox(&mut auto, lang.t(Msg::AutoRender))
+                .on_hover_text(lang.t(Msg::AutoRenderTip))
+                .changed()
+            {
+                app.settings.auto_render = auto;
+                app.save_settings();
+            }
+            if let Some(p) = crate::settings::settings_path() {
+                ui.label(
+                    RichText::new(lang.f(Msg::SavedIn, &[("path", &p.display().to_string())]))
+                        .weak(),
+                );
             }
         });
-        ui.label(RichText::new(format!("Runs: {}", app.worker_command())).weak());
-        if app.startup.python.is_some() {
-            ui.label(RichText::new("--python on the command line overrides the saved interpreter for this run.").weak());
-        }
-        ui.add_space(6.0);
-        ui.label(RichText::new("Install in that Python").strong());
-        let cmd = app.interpreter.clone();
-        let mut hint = format!(
-            "{cmd} -m pip install audace-display\n# or, from a checkout of the audace-display repository:\n{cmd} -m pip install -e <path to audace-display>"
-        );
-        ui.add(egui::TextEdit::multiline(&mut hint).font(egui::TextStyle::Monospace).desired_rows(3));
-        ui.add_space(6.0);
-        let mut auto = app.settings.auto_render;
-        if ui
-            .checkbox(&mut auto, "Update the view automatically when an option changes")
-            .on_hover_text("Off: press Render after changing options (large files).")
-            .changed()
-        {
-            app.settings.auto_render = auto;
-            app.save_settings();
-        }
-        if let Some(p) = crate::settings::settings_path() {
-            ui.label(RichText::new(format!("Saved in {}", p.display())).weak());
-        }
-    });
     app.show_settings = open;
 }
 
 fn log_window(app: &mut GuiApp, ctx: &egui::Context) {
+    let lang = app.lang;
     let mut open = app.show_log;
     let lines = app.stderr_tail(400);
-    egui::Window::new("Worker log")
+    egui::Window::new(lang.t(Msg::WorkerLog))
+        .id(egui::Id::new("log_window"))
         .open(&mut open)
         .default_size([700.0, 400.0])
         .show(ctx, |ui| {
@@ -1299,7 +1458,7 @@ fn log_window(app: &mut GuiApp, ctx: &egui::Context) {
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     if lines.is_empty() {
-                        ui.label(RichText::new("(nothing written to stderr)").weak());
+                        ui.label(RichText::new(lang.t(Msg::LogEmpty)).weak());
                     }
                     for l in &lines {
                         ui.monospace(l);
@@ -1320,5 +1479,19 @@ fn dropped_files(app: &mut GuiApp, ctx: &egui::Context) {
     });
     if let Some(path) = dropped.into_iter().next() {
         app.open_file(path);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_french_field_takes_a_comma_or_a_point() {
+        assert_eq!(parse_typed_number("12,5"), Some(12.5));
+        assert_eq!(parse_typed_number("12.5"), Some(12.5));
+        assert_eq!(parse_typed_number(" −0,25 "), Some(-0.25));
+        assert_eq!(parse_typed_number("1\u{a0}000,5"), Some(1000.5));
+        assert_eq!(parse_typed_number("abc"), None);
     }
 }

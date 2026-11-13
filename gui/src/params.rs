@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 
 use serde_json::{Map, Value, json};
 
+use crate::i18n::{Lang, Msg};
 use crate::protocol::{OptionKind, OptionSchema, ViewSchema};
 
 /// A view of the viewer; each is a CLI subcommand.
@@ -48,28 +49,28 @@ impl View {
         View::ALL.into_iter().find(|v| v.cli_name() == name)
     }
 
-    pub fn label(self) -> &'static str {
-        match self {
-            View::Info => "Info",
-            View::Heatmap => "Waterfall",
-            View::Bands => "Band heatmaps",
-            View::Fft => "Spectrum (FFT)",
-            View::Trace => "Time trace",
-            View::Scope => "Oscilloscope",
-            View::Inspect => "Inspect location",
-        }
+    pub fn label(self, lang: Lang) -> &'static str {
+        lang.t(match self {
+            View::Info => Msg::ViewInfo,
+            View::Heatmap => Msg::ViewHeatmap,
+            View::Bands => Msg::ViewBands,
+            View::Fft => Msg::ViewFft,
+            View::Trace => Msg::ViewTrace,
+            View::Scope => Msg::ViewScope,
+            View::Inspect => Msg::ViewInspect,
+        })
     }
 
-    pub fn description(self) -> &'static str {
-        match self {
-            View::Info => "Header metadata and statistics of the default channel.",
-            View::Heatmap => "Distance x time waterfall, decimated to screen resolution.",
-            View::Bands => "One waterfall per temporal frequency band, plus the global one.",
-            View::Fft => "Temporal spectrum (FFT along the pulses) at one or more positions.",
-            View::Trace => "Time series at one position, min/max envelope.",
-            View::Scope => "Replays the lines (pulses) in real time, looping.",
-            View::Inspect => "One location: waveform and its spectrum.",
-        }
+    pub fn description(self, lang: Lang) -> &'static str {
+        lang.t(match self {
+            View::Info => Msg::DescInfo,
+            View::Heatmap => Msg::DescHeatmap,
+            View::Bands => Msg::DescBands,
+            View::Fft => Msg::DescFft,
+            View::Trace => Msg::DescTrace,
+            View::Scope => Msg::DescScope,
+            View::Inspect => Msg::DescInspect,
+        })
     }
 
     /// Views whose plot can be zoomed into a new window computed by the worker.
@@ -78,10 +79,50 @@ impl View {
     }
 }
 
-/// How the options of a view are grouped in the panel: `(title, dests)`.
+/// A group of options in the panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Group {
+    Window,
+    Decimation,
+    Colour,
+    Bands,
+    Resolution,
+    Positions,
+    Spectrum,
+    TimeWindow,
+    Position,
+    Display,
+    Loop,
+    Location,
+    Waveform,
+    Other,
+}
+
+impl Group {
+    pub fn title(self, lang: Lang) -> &'static str {
+        lang.t(match self {
+            Group::Window => Msg::GroupWindow,
+            Group::Decimation => Msg::GroupDecimation,
+            Group::Colour => Msg::GroupColour,
+            Group::Bands => Msg::GroupBands,
+            Group::Resolution => Msg::GroupResolution,
+            Group::Positions => Msg::GroupPositions,
+            Group::Spectrum => Msg::GroupSpectrum,
+            Group::TimeWindow => Msg::GroupTimeWindow,
+            Group::Position => Msg::GroupPosition,
+            Group::Display => Msg::GroupDisplay,
+            Group::Loop => Msg::GroupLoop,
+            Group::Location => Msg::GroupLocation,
+            Group::Waveform => Msg::GroupWaveform,
+            Group::Other => Msg::GroupOther,
+        })
+    }
+}
+
+/// How the options of a view are grouped in the panel: `(group, dests)`.
 /// An option of the CLI that no group names lands in "Other options", so an
 /// option the CLI gains is still offered.
-pub fn layout(view: View) -> &'static [(&'static str, &'static [&'static str])] {
+pub fn layout(view: View) -> &'static [(Group, &'static [&'static str])] {
     const WINDOW: &[&str] = &[
         "start_time",
         "duration",
@@ -92,47 +133,50 @@ pub fn layout(view: View) -> &'static [(&'static str, &'static [&'static str])] 
     match view {
         View::Info => &[],
         View::Heatmap => &[
-            ("Time and distance window", WINDOW),
-            ("Decimation", &["max_time_bins", "max_space_bins", "reduce"]),
-            ("Colour", &["variance", "db", "vmin", "vmax", "cmap"]),
+            (Group::Window, WINDOW),
+            (
+                Group::Decimation,
+                &["max_time_bins", "max_space_bins", "reduce"],
+            ),
+            (Group::Colour, &["variance", "db", "vmin", "vmax", "cmap"]),
         ],
         View::Bands => &[
             (
-                "Bands (Hz)",
+                Group::Bands,
                 &["f0", "f1", "f2", "f3", "no_detrend", "variance"],
             ),
-            ("Time and distance window", WINDOW),
-            ("Resolution", &["max_time_bins", "max_space_bins"]),
-            ("Colour", &["cmap"]),
+            (Group::Window, WINDOW),
+            (Group::Resolution, &["max_time_bins", "max_space_bins"]),
+            (Group::Colour, &["cmap"]),
         ],
         View::Fft => &[
-            ("Positions", &["position", "position_range"]),
-            ("Spectrum", &["window", "no_detrend", "fmax", "db"]),
+            (Group::Positions, &["position", "position_range"]),
+            (Group::Spectrum, &["window", "no_detrend", "fmax", "db"]),
             (
-                "Time window",
+                Group::TimeWindow,
                 &["start_time", "duration", "subsample_time", "max_pulses"],
             ),
         ],
         View::Trace => &[
-            ("Position", &["position"]),
+            (Group::Position, &["position"]),
             (
-                "Time window",
+                Group::TimeWindow,
                 &["start_time", "duration", "subsample_time", "max_pulses"],
             ),
-            ("Display", &["max_points"]),
+            (Group::Display, &["max_points"]),
         ],
         View::Scope => &[
-            ("Loop", &["start_time", "duration"]),
-            ("Display", &["max_points"]),
+            (Group::Loop, &["start_time", "duration"]),
+            (Group::Display, &["max_points"]),
         ],
         View::Inspect => &[
-            ("Location", &["index", "position"]),
+            (Group::Location, &["index", "position"]),
             (
-                "Time window",
+                Group::TimeWindow,
                 &["start_time", "duration", "subsample_time", "max_pulses"],
             ),
             (
-                "Waveform and spectrum",
+                Group::Waveform,
                 &["no_detrend", "clip_percentile", "window", "fmax", "fft_log"],
             ),
         ],
@@ -213,15 +257,15 @@ impl ViewOptions {
     }
 
     /// The options in the panel's groups, then the ones no group names.
-    pub fn grouped(&self, view: View) -> Vec<(&'static str, Vec<&OptionSchema>)> {
+    pub fn grouped(&self, view: View) -> Vec<(Group, Vec<&OptionSchema>)> {
         let mut out = Vec::new();
         let mut placed = std::collections::BTreeSet::new();
-        for (title, dests) in layout(view) {
+        for (group, dests) in layout(view) {
             let opts: Vec<&OptionSchema> =
                 dests.iter().filter_map(|d| self.schema.option(d)).collect();
             placed.extend(dests.iter().copied());
             if !opts.is_empty() {
-                out.push((*title, opts));
+                out.push((*group, opts));
             }
         }
         let other: Vec<&OptionSchema> = self
@@ -235,7 +279,7 @@ impl ViewOptions {
             })
             .collect();
         if !other.is_empty() {
-            out.push(("Other options", other));
+            out.push((Group::Other, other));
         }
         out
     }
@@ -412,8 +456,9 @@ mod tests {
     fn an_unknown_cli_option_lands_in_other_options() {
         let o = heatmap();
         let groups = o.grouped(View::Heatmap);
-        let (title, opts) = groups.last().unwrap();
-        assert_eq!(*title, "Other options");
+        let (group, opts) = groups.last().unwrap();
+        assert_eq!(*group, Group::Other);
+        assert_eq!(group.title(Lang::Fr), "Autres options");
         assert_eq!(
             opts.iter().map(|o| o.dest.as_str()).collect::<Vec<_>>(),
             vec!["brand_new_option"]

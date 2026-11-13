@@ -51,6 +51,15 @@ Requires `invisensing >= 1.6.0` (publish it to PyPI first).
   own views (its parser, its file opening, its `do_<view>`) served over a
   line-delimited JSON protocol with length-framed float arrays, what the CLI
   would hand to matplotlib, byte for byte. The CLI is unchanged.
+- **The viewer in French** beside English: chosen in Settings (saved), with
+  `--lang en|fr` for one run, the system's locale by default; it switches at
+  once. Every text of the window is translated, the CLI's titles, labels,
+  `info` text, refusals and warnings included, numbers with a decimal comma.
+- **Message codes from the worker**: an error, a warning and the reason a
+  view or unit is unavailable carry a stable `code` and its `params` beside
+  the English text (`gui_worker.message_codes()` lists them), for the viewer
+  to render in its language. Optional fields of protocol 1; the CLI's output
+  is unchanged.
 
 ## 0.8.0
 
