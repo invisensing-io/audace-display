@@ -21,6 +21,9 @@ from audace_display.cli import main
 needs_gauge = pytest.mark.skipif(
     not hasattr(File, "gauge_length_m"), reason="--nanostrain needs invisensing >= 1.6.0"
 )
+needs_rate = pytest.mark.skipif(
+    not hasattr(File, "strain_rate_per_rad"), reason="--strain-rate needs invisensing >= 1.6.0"
+)
 
 
 # --- Helpers -------------------------------------------------------------------
@@ -270,6 +273,45 @@ def test_strain_is_served_as_the_cli_shows_it(drawn, gauge_phase):
     h, a = Session().result("render", view="heatmap", path=str(gauge_phase), unit="nanostrain")
     assert h["label"] == kw["label"] == "strain (nm/m)"
     assert a["data"].tobytes() == args[0].tobytes()
+
+
+@needs_rate
+def test_strain_rate_is_offered_beside_strain():
+    h, _ = Session().result("hello", protocol=gui_worker.PROTOCOL)
+    units = {u["name"]: u for u in h["units"]}
+    assert units["strain_rate"]["unit"] == "nm/m/s"
+    assert units["strain_rate"]["flag"] == "--strain-rate"
+    # The CLI makes the two exclusive; the viewer sends one unit at a time.
+    assert ["nanostrain", "strain_rate"] in h["views"]["heatmap"]["exclusive"]
+
+
+@needs_rate
+def test_open_offers_strain_rate_only_when_the_cli_does(phase_dat, gauge_phase):
+    units = {u["name"]: u for u in Session().result("open", path=str(gauge_phase))[0]["units"]}
+    assert units["strain_rate"]["available"] is True
+    units = {u["name"]: u for u in Session().result("open", path=str(phase_dat))[0]["units"]}
+    assert units["strain_rate"]["available"] is False
+    assert "--strain-rate" in units["strain_rate"]["reason"]
+
+
+@needs_rate
+@pytest.mark.parametrize("view,argv,options", [
+    ("heatmap", ["--max-time-bins", "50"], {"max_time_bins": 50}),
+    ("fft", ["--position", "20"], {"position": "20"}),
+    ("trace", ["--position", "20"], {"position": 20.0}),
+])
+def test_strain_rate_is_served_as_the_cli_shows_it(drawn, gauge_phase, view, argv, options):
+    _, args, kw = cli_draws(drawn, [view, str(gauge_phase), "--strain-rate", *argv])
+    h, a = Session().result("render", view=view, path=str(gauge_phase), unit="strain_rate",
+                            options=options)
+    assert h["type"] == view, h
+    if view == "heatmap":
+        assert a["data"].tobytes() == args[0].tobytes()  # NaN bins included
+        assert h["label"] == kw["label"] and "nm/m/s" in h["label"]
+    elif view == "fft":
+        assert a["curve0"].tobytes() == args[1][0][1].tobytes()
+    else:
+        assert a["lo"].tobytes() == args[1].tobytes() and a["hi"].tobytes() == args[2].tobytes()
 
 
 def test_info_is_the_cli_text(phase_dat, capsys):
