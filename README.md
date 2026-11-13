@@ -11,8 +11,8 @@ library, automatically detects what the file holds (its content type), and shows
   files,
 - **per-frequency-band heatmaps** (`bandheatmaps`) and a temporal **variance /
   log-variance** color mode (`--variance`),
-- a phase as **strain, in nm/m** (`--nanostrain`), when the file records its
-  gauge length.
+- a phase as **strain, in nm/m** (`--nanostrain`), or as **strain rate, in
+  nm/m/s** (`--strain-rate`), when the file records its gauge length.
 
 Reading is **streamed and decimated**: a multi-GB file is reduced to screen
 resolution without ever being fully loaded into memory.
@@ -25,7 +25,7 @@ pip install audace-display[interactive] # + pyqtgraph backend (fast interactive)
 ```
 
 Dependencies: `numpy`, `matplotlib`, `invisensing` >= 1.6.0 (gauge length and
-phase as strain since 1.6.0; content-type registry revision 4 since 1.5.0;
+phase as strain and strain rate since 1.6.0; content-type registry revision 4 since 1.5.0;
 corrected line times since 1.4.0; actual trigger frequency since 1.3.0; O(1)
 seek and TDMS/SEG-Y streaming since 1.1.0). Optional
 `interactive` extra: `pyqtgraph` + `PyQt5`.
@@ -282,6 +282,51 @@ audace-display info phase.h5 --nanostrain
   MOZART / MOZART_PLUS phase, a file without a content type). No gauge
   length is ever assumed.
 
+## Phase as strain rate, in nm/m/s (0.9.0)
+
+`--strain-rate` shows a phase as **strain rate, in nm/m/s**, in the same
+views as `--nanostrain` (the two options exclude each other). A phase file
+holds the accumulated phase of each line; the strain rate of a line is its
+strain increment from the previous line times the line rate:
+
+```text
+strain_rate[n] [nm/m/s] = (strain[n] - strain[n-1]) [nm/m] x f_trig [Hz]
+                        = (phase[n] - phase[n-1]) [rad] / gauge_length_m x 110.37 x f_trig
+```
+
+`f_trig` is the rate the card really fired at (`info`'s "actual" trigger
+frequency; the requested one on a file that does not carry the exact
+clock). The file is opened with invisensing's `phase_unit="strain_rate"`
+(invisensing >= 1.6.0), which computes it while it reads, at the full line
+rate, carrying the previous line across chunks and seeks.
+
+```bash
+audace-display phase.h5 --strain-rate                          # heatmap, nm/m/s
+audace-display heatmap phase.h5 --strain-rate --variance log   # log10 Var[strain rate] (nm/m/s)^2
+audace-display fft phase.h5 --strain-rate --position 120       # Amplitude (nm/m/s)
+audace-display info phase.h5 --strain-rate                     # the factor applied
+```
+
+- **Decimation comes after**: every view reduces the strain rate computed
+  line by line (a time bin's mean is the mean of its lines' strain rates),
+  never a strain rate derived from decimated strain. `--subsample-time`
+  keeps one full-rate strain rate out of N.
+- **Missing lines (NaN)**: the file's first line has no previous line, and
+  a line after a gap of an HDF5's time axis (lost shots: `info` lists them
+  as `Time gaps`) spans more than one period; both read NaN. A time bin and
+  the color limits skip them (a bin of NaN only is left blank), the
+  oscilloscope draws nothing for such a line, `info` leaves them out of its
+  statistics (and says how many), and the FFT, `inspect` and the band
+  filters, which need evenly spaced samples, take a missing sample as the
+  column's mean (0 once the mean is removed).
+- Labels: `strain rate (nm/m/s)`, `Var[strain rate] (nm/m/s)^2` and
+  `log10 Var[strain rate] (nm/m/s)^2` with `--variance`, `RMS[strain rate]
+  (nm/m/s)` for a band, `strain rate (dB, ref=... nm/m/s)` with `--db`,
+  `Amplitude (nm/m/s)` for a spectrum, in matplotlib and pyqtgraph alike;
+  `viridis` and the 1/99 percentiles.
+- **Refused** like `--nanostrain`, and for a file whose trigger frequency is
+  unknown (0). `--nanostrain --strain-rate` is a usage error.
+
 ## Frequency-band heatmaps
 
 `bandheatmaps` decomposes the **temporal** frequency axis (the FFT along the
@@ -411,8 +456,8 @@ with File("acquisition.dat") as f:
 - **Interactive display** by default; `--save out.png` for headless mode (the
   `Agg` backend is chosen automatically when there is no display).
 - **Auto colormap**: `viridis` (sequential) for magnitude/raw and for a phase
-  shown as strain (`--nanostrain`), `RdBu_r` (diverging, centered on 0) for
-  phase/arctan. Override with `--cmap`.
+  shown as strain or strain rate (`--nanostrain`, `--strain-rate`), `RdBu_r`
+  (diverging, centered on 0) for phase/arctan. Override with `--cmap`.
 - **Auto-scaling**: 1/99 percentiles in linear, `median - 30 dB -> max` in dB,
   centered on 0 for angular channels. Override with `--vmin`/`--vmax`.
 

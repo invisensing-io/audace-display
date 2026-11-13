@@ -23,6 +23,24 @@ Requires `invisensing >= 1.6.0` (publish it to PyPI first).
   bounds in nm/m beside the radians.
 - A variance label squares a compound unit whole (`(nm/m)^2`); a simple one
   is unchanged (`rad^2`).
+- **`--strain-rate`: a phase shown as strain rate, in nm/m/s** (exclusive
+  with `--nanostrain`, same views). The file is opened with invisensing's
+  `phase_unit="strain_rate"`: the strain increment from the previous line
+  times the real trigger frequency, `(phase[n] - phase[n-1]) /
+  gauge_length_m x 110.37 x f_trig`, computed at the full line rate and only
+  then decimated. Labels `strain rate (nm/m/s)`, `Var[strain rate]
+  (nm/m/s)^2`, `RMS[strain rate] (nm/m/s)`, `Amplitude (nm/m/s)`. `info`
+  prints the factor and the time-axis gaps; refused like `--nanostrain`, and
+  for a file without a trigger frequency.
+- **NaN samples are missing ones.** A strain rate has none on the file's
+  first line and after a gap of the time axis (NaN). With `--strain-rate`
+  the time bins reduce each cell over its other samples (a cell of NaN only
+  stays NaN), and the FFT and band filters take a missing sample as the
+  column's mean. In every mode the color limits, the dB reference and the
+  log-variance floor come from the finite values, the trace and oscilloscope
+  envelopes skip NaN, `inspect` fits its trend to the finite samples, and
+  `info` leaves NaN out of its statistics and says how many; data without
+  NaN is shown exactly as before.
 
 ## 0.8.0
 
