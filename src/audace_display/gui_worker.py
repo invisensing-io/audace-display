@@ -55,14 +55,35 @@ line's ``\\n``, the arrays one after the other, C order, little-endian
   ``trace``, ``inspect``, ``scope``, ``scope_frame``, ``bye``: results;
 - ``progress``: ``{"stage": "reading", "done": 1200, "total": 5000}``, any
   number of them before the result of a long request;
-- ``error``: ``{"kind": ..., "message": ...}``; ``kind`` is ``audace`` (the
-  CLI's own refusal, the text it prints after ``ERROR:``), ``options`` (an
-  option the CLI's parser refuses), ``file``, ``cancelled``, ``protocol`` or
-  ``internal`` (a bug: the traceback goes to stderr).
+- ``error``: ``{"kind": ..., "message": ..., "code": ..., "params": {...}}``;
+  ``kind`` is ``audace`` (the CLI's own refusal, the text it prints after
+  ``ERROR:``), ``options`` (an option the CLI's parser refuses), ``file``,
+  ``cancelled``, ``protocol`` or ``internal`` (a bug: the traceback goes to
+  stderr).
 
 Every result carries ``warnings``: the CLI's ``WARNING:`` lines and Python
 warnings raised while it was computed. Non-finite floats travel as ``null``.
 The worker writes nothing else to stdout: stray prints go to stderr.
+
+Message codes
+-------------
+The texts are English, the CLI's own words. So that a viewer can show them in
+its own language, the worker attaches a stable code and its parameters to the
+messages it knows (:func:`message_codes` lists them all):
+
+- an ``error`` has ``code`` (a string, or ``null`` for a message the worker
+  does not know) and ``params`` (an object of strings);
+- a result has ``warning_codes``, aligned with ``warnings``: for each warning
+  ``{"code": ..., "params": {...}}``, or ``null``;
+- in ``file``, an unavailable view or unit has ``code`` and ``params`` beside
+  its ``reason``.
+
+The CLI's refusals and warnings get their code from their wording (the
+patterns of ``_CLI_MESSAGES``, checked against the CLI by the tests); the
+worker's own messages carry theirs. A parameter is the text the CLI wrote
+(numbers as it formatted them). ``message`` and ``warnings`` are unchanged,
+and the codes are optional: a viewer that ignores them, or a worker older than
+them, still speaks protocol 1.
 """
 from __future__ import annotations
 
@@ -74,6 +95,8 @@ import json
 import math
 import os
 import queue
+import re
+import string
 import sys
 import threading
 import time
@@ -125,22 +148,198 @@ _BUILDERS = (
 _PROGRESS_PERIOD_S = 0.1
 
 
-class _Cancelled(Exception):
+# --- Message codes -------------------------------------------------------------
+
+#: The worker's own messages: code -> English text, a ``str.format`` template
+#: whose fields are the parameters sent with the code.
+_OWN_MESSAGES = {
+    "cancelled": "cancelled.",
+    "file_not_found": "file not found: {detail}",
+    "internal": "unexpected {exception}: {detail}",
+    "protocol_mismatch": "the viewer speaks protocol {client}, this audace-display {version} "
+                         "speaks protocol {protocol}: install the audace-display that matches "
+                         "the viewer.",
+    "scope_session_gone": "no such oscilloscope session (render the scope again).",
+    "unknown_command": "unknown command {command}.",
+    "request_field": "the request needs '{name}' ({type}).",
+    "view_unknown": "unknown view '{view}'. Known: {known}.",
+    "option_unknown": "the {view} view has no option '{option}'.",
+    "option_takes_value": "{flag} takes a value, not true/false.",
+    "option_unsupported_value": "{flag}: unsupported value {value}.",
+    "option_not_bool": "{flag} is true or false, got {value}.",
+    "unit_not_offered": "the installed CLI cannot show '{unit}' for the {view} view.",
+    "options_not_object": "'options' must be an object.",
+    "scope_unavailable": "the oscilloscope needs invisensing >= 1.1.0.",
+}
+
+#: Extra parameters of an own message, beyond its template's fields.
+_OWN_EXTRA_PARAMS = {"file_not_found": ("path",)}
+
+#: The CLI's refusals and warnings, and the errors of its parser, in their own
+#: words: ``(code, pattern)``. A message the whole of which matches a pattern
+#: travels with ``code`` and the pattern's named groups as ``params``; one
+#: that matches none has no code. The first match wins.
+_CLI_MESSAGES = tuple((code, re.compile(pattern, re.DOTALL)) for code, pattern in (
+    # cli.py: bandheatmaps
+    ("bands_need_f1", r"bandheatmaps needs at least --f1 \(upper edge of band 1, in Hz\)\."),
+    ("bands_f3_needs_f2", r"--f3 requires --f2 \(bands must be contiguous\)\."),
+    ("bands_f0_negative", r"--f0 must be >= 0\."),
+    ("bands_not_increasing",
+     r"band edges must be strictly increasing, got \[(?P<edges>[^\]]*)\] Hz\."),
+    ("bands_none_below_nyquist", r"no valid frequency band after clamping to Nyquist\."),
+    ("bands_too_few_pulses", r"not enough pulses for a band analysis\."),
+    # reader.py: the band analysis's memory bound
+    ("bands_too_much_memory",
+     r"band analysis needs the whole time series in RAM \(~(?P<gb>[\d.]+) GB: "
+     r"(?P<pulses>[\d,]+) pulses x (?P<bins>\d+) bins\)\. Restrict with --duration / "
+     r"--max-pulses, or lower --max-space-bins\."),
+    # cli.py (trace) and processing.py (fft positions)
+    ("position_outside",
+     r"position (?P<position>\S+) m outside the fiber \(range: 0 to (?P<max>-?[\d.]+) m\)\."),
+    ("trace_no_data", r"no data read for the trace\."),
+    ("fft_too_few_pulses", r"not enough pulses for an FFT\."),
+    ("fft_too_few_samples", r"not enough time samples for an FFT\."),
+    ("scope_needs_invisensing",
+     r"oscilloscope mode requires invisensing >= 1\.1\.0 \(O\(1\) per-line seek\)\."),
+    ("index_outside",
+     r"location index (?P<index>-?\d+) outside the fiber \(0 to (?P<last>-?\d+), "
+     r"i\.e\. 0 to (?P<max>-?[\d.]+) m\)\."),
+    ("inspect_too_few_pulses", r"not enough pulses to inspect this location\."),
+    # cli.py: --nanostrain / --strain-rate
+    ("unit_needs_invisensing",
+     r"(?P<option>--[\w-]+) needs invisensing >= 1\.6\.0 \(pip install -U invisensing\)\."),
+    ("unit_not_a_phase",
+     r"(?P<option>--[\w-]+) shows a phase as (?P<what>.+?) \((?P<unit>[^()]*)\), and "
+     r"(?P<file>.+) holds '(?P<content>.*)' \(content type (?P<content_type>-?\d+), mode "
+     r"(?P<mode>[\w-]+)\), not a phase\. Drop (?P=option)\."),
+    ("unit_no_gauge_length",
+     r"(?P<option>--[\w-]+) needs the gauge length the phase was measured over, and "
+     r"(?P<file>.+) \('(?P<content>.*)', content type (?P<content_type>-?\d+)\) does not "
+     r"record its gauge length \(a recording made before 2026-11, a MOZART or MOZART_PLUS "
+     r"phase, or a file converted without it\)\. No gauge length is assumed: drop "
+     r"(?P=option) to show the phase in radians\."),
+    ("strain_rate_no_trigger",
+     r"--strain-rate multiplies each line's strain increment by the trigger frequency, and "
+     r"(?P<file>.+) does not know its own \(trigger frequency (?P<hz>\S+) Hz\)\. No rate "
+     r"is assumed: use --nanostrain to show the strain\."),
+    ("unit_refused", r"(?P<option>--nanostrain|--strain-rate): (?P<detail>.+)"),
+    # reader.py: windows
+    ("empty_time_range",
+     r"empty time range after --start-time/--duration \(p0=(?P<p0>-?\d+), "
+     r"p1=(?P<p1>-?\d+), pulses=(?P<pulses>\d+)\)\."),
+    ("empty_distance_range",
+     r"empty spatial slice after --start-distance/--end-distance \(d0=(?P<d0>-?\d+), "
+     r"d1=(?P<d1>-?\d+), positions=(?P<positions>\d+)\)\."),
+    ("no_data", r"no data read\."),
+    # processing.py
+    ("clip_percentile_range", r"clip percentile must be between 0 and 100\."),
+    ("empty_position_spec", r"empty position spec: '(?P<spec>.*)'\."),
+    ("window_unknown", r"unknown window '(?P<window>.*)'\. Known: (?P<known>.*)\."),
+    # channels.py
+    ("channel_unknown", r"unknown channel '(?P<channel>.*)'\. Known: (?P<known>.*)"),
+    ("channel_unavailable",
+     r"channel '(?P<channel>.*)' unavailable in mode (?P<mode>[\w-]+)\. "
+     r"Available for this mode: (?P<available>.*)"),
+    # decimate.py
+    ("bins_too_few", r"n_bins must be >= 1\."),
+    ("points_too_few", r"n_out must be >= 1\."),
+    # gui_worker.py: colormap_lut
+    ("colormap_unknown", r"unknown colormap '(?P<name>.*)'\."),
+    # argparse, the CLI's parser (its wording varies a little between Pythons)
+    ("option_invalid_value",
+     r"argument (?P<flag>\S+): invalid (?P<type>\w+) value: '(?P<value>.*)'"),
+    ("option_invalid_choice",
+     r"argument (?P<flag>\S+): invalid choice: '?(?P<value>.*?)'? \(choose from (?P<choices>.*)\)"),
+    ("option_not_allowed_with",
+     r"argument (?P<flag>\S+): not allowed with argument (?P<other>\S+)"),
+    ("option_required", r"the following arguments are required: (?P<flags>.+)"),
+    # cli.py: warnings
+    ("warn_band_edge_clamped",
+     r"band edge (?P<edge>-?\d+) Hz exceeds Nyquist \((?P<nyquist>\d+) Hz\); "
+     r"clamping to Nyquist\."),
+    ("warn_bands_memory",
+     r"bandheatmaps: ~(?P<gb>[\d.]+) GB to load \((?P<pulses>[\d,]+) pulses x (?P<bins>\d+) "
+     r"bins\)\. Use --duration / --max-pulses / --max-space-bins if memory is limited\."),
+    ("warn_fft_subsampled",
+     r"FFT: (?P<dropped>\d+) positions subsampled to (?P<kept>\d+) \(1 in (?P<step>\d+)\) "
+     r"to bound RAM\. Restrict with --position-range or --duration for an exact average\."),
+    ("warn_fft_memory",
+     r"FFT: ~(?P<gb>[\d.]+) GB to load \((?P<pulses>[\d,]+) pulses x (?P<positions>\d+) "
+     r"positions\)\. Use --duration or --max-pulses if memory is limited\."),
+))
+
+
+def message_code(text: str) -> Optional[tuple[str, dict]]:
+    """``(code, params)`` of a message of the CLI, from its wording, or
+    ``None`` for a message no pattern knows."""
+    for code, pattern in _CLI_MESSAGES:
+        m = pattern.fullmatch(text)
+        if m is not None:
+            return code, {k: v for k, v in m.groupdict().items() if v is not None}
+    return None
+
+
+def message_codes() -> dict:
+    """Every code the worker can attach, with the names of its parameters
+    (what a viewer needs to check its translations)."""
+    out = {}
+    for code, template in _OWN_MESSAGES.items():
+        fields = {f for _, f, _, _ in string.Formatter().parse(template) if f}
+        out[code] = sorted(fields | set(_OWN_EXTRA_PARAMS.get(code, ())))
+    for code, pattern in _CLI_MESSAGES:
+        out[code] = sorted(pattern.groupindex)
+    return out
+
+
+class _Coded(Exception):
+    """An error the worker raises in its own words: its code and parameters
+    make the English message."""
+
+    def __init__(self, code: str, **params):
+        self.code = code
+        self.params = {k: str(v) for k, v in params.items()}
+        super().__init__(_OWN_MESSAGES[code].format(**self.params))
+
+
+def _code_of(e: BaseException) -> tuple[Optional[str], dict]:
+    """The code and parameters of an error: its own, or those of the CLI
+    message it carries."""
+    if isinstance(e, _Coded):
+        return e.code, e.params
+    found = message_code(str(e))
+    return found if found is not None else (None, {})
+
+
+def _reason(e: BaseException) -> dict:
+    """``reason``, ``code`` and ``params`` of a view or unit that is not
+    available."""
+    code, params = _code_of(e)
+    return {"reason": str(e), "code": code, "params": params}
+
+
+class _Cancelled(_Coded):
     """The viewer cancelled the request being computed."""
+
+    def __init__(self):
+        super().__init__("cancelled")
 
 
 class _OptionsError(Exception):
     """The CLI's parser refused the options of a request."""
 
 
-class _ProtocolError(Exception):
+class _OwnOptionsError(_Coded, _OptionsError):
+    """Options the worker itself refuses."""
+
+
+class _ProtocolError(_Coded):
     """A request the protocol does not allow (a missing field, a wrong type)."""
 
 
 def _field(req: dict, name: str, kind: type):
     value = req.get(name)
     if not isinstance(value, kind) or isinstance(value, bool) and kind is not bool:
-        raise _ProtocolError(f"the request needs '{name}' ({kind.__name__}).")
+        raise _ProtocolError("request_field", name=name, type=kind.__name__)
     return value
 
 
@@ -352,12 +551,13 @@ def view_schema(parser: Optional[argparse.ArgumentParser] = None) -> dict:
 
 def _format_value(action: argparse.Action, value: Any) -> str:
     if isinstance(value, bool):
-        raise _OptionsError(f"{_long_flag(action)} takes a value, not true/false.")
+        raise _OwnOptionsError("option_takes_value", flag=_long_flag(action))
     if isinstance(value, float):
         return repr(value)  # shortest text that parses back to the same float
     if isinstance(value, (int, str)):
         return str(value)
-    raise _OptionsError(f"{_long_flag(action)}: unsupported value {value!r}.")
+    raise _OwnOptionsError("option_unsupported_value", flag=_long_flag(action),
+                           value=repr(value))
 
 
 def build_argv(view: str, path: str, *, channel: Optional[str] = None,
@@ -366,7 +566,7 @@ def build_argv(view: str, path: str, *, channel: Optional[str] = None,
     """The CLI command line of a request (without the program name)."""
     subs = _subparsers(parser or cli.build_parser())
     if view not in VIEWS or view not in subs:
-        raise _OptionsError(f"unknown view '{view}'. Known: {', '.join(VIEWS)}.")
+        raise _OwnOptionsError("view_unknown", view=view, known=", ".join(VIEWS))
     actions = {a.dest: a for a in subs[view]._actions if a.option_strings}
     argv = [view, str(path)]
     opts = dict(options or {})
@@ -375,17 +575,18 @@ def build_argv(view: str, path: str, *, channel: Optional[str] = None,
     if unit not in (None, "rad"):
         known = {dest for dest, _, _ in UNITS}
         if unit not in known or unit not in actions:
-            raise _OptionsError(f"the installed CLI cannot show '{unit}' for the {view} view.")
+            raise _OwnOptionsError("unit_not_offered", unit=unit, view=view)
         opts[unit] = True
     for dest, value in opts.items():
         action = actions.get(dest)
         if action is None or dest in HIDDEN_OPTIONS:
-            raise _OptionsError(f"the {view} view has no option '{dest}'.")
+            raise _OwnOptionsError("option_unknown", view=view, option=dest)
         if value is None:
             continue
         if isinstance(action, argparse._StoreTrueAction):
             if not isinstance(value, bool):
-                raise _OptionsError(f"{_long_flag(action)} is true or false, got {value!r}.")
+                raise _OwnOptionsError("option_not_bool", flag=_long_flag(action),
+                                       value=repr(value))
             if value:
                 argv.append(_long_flag(action))
             continue
@@ -470,13 +671,22 @@ class _Tee(io.TextIOBase):
         self._target.flush()
 
 
+def _warning_codes(warns: list) -> list:
+    """``warning_codes`` of a result: the code of each warning, or ``None``."""
+    out = []
+    for w in warns:
+        found = message_code(w)
+        out.append(None if found is None else {"code": found[0], "params": found[1]})
+    return out
+
+
 @contextlib.contextmanager
 def _captured():
     """Collects what the CLI prints (``info``), its ``WARNING:`` lines and the
     Python warnings raised meanwhile."""
     out = io.StringIO()
     tee = _Tee(sys.stderr)
-    result = {"stdout": "", "warnings": []}
+    result = {"stdout": "", "warnings": [], "warning_codes": []}
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         try:
@@ -488,6 +698,7 @@ def _captured():
                      if ln.startswith("WARNING: ")]
             lines += [str(w.message) for w in caught]
             result["warnings"] = lines
+            result["warning_codes"] = _warning_codes(lines)
 
 
 @contextlib.contextmanager
@@ -599,27 +810,35 @@ class Worker:
                 self._send({"id": rid, "type": "bye"})
                 return False
             else:
-                self._error(rid, "protocol", f"unknown command {cmd!r}.")
-        except _Cancelled:
-            self._error(rid, "cancelled", "cancelled.")
+                raise _ProtocolError("unknown_command", command=repr(cmd))
+        except _Cancelled as e:
+            self._error(rid, "cancelled", e)
         except _OptionsError as e:
-            self._error(rid, "options", str(e))
+            self._error(rid, "options", e)
         except AudaceDisplayError as e:
-            self._error(rid, "audace", str(e))
+            self._error(rid, "audace", e)
         except FileNotFoundError as e:
-            self._error(rid, "file", f"file not found: {e}")
+            # The file the request names, when the error does not say (invisensing's).
+            path = e.filename if e.filename is not None else req.get("path")
+            self._error(rid, "file", _Coded("file_not_found", detail=e,
+                                            path=path if isinstance(path, str) else e))
         except _ProtocolError as e:
-            self._error(rid, "protocol", str(e))
+            self._error(rid, "protocol", e)
         except Exception as e:  # noqa: BLE001 -- reported, never fatal
             self._internal(rid, e)
         return True
 
-    def _error(self, rid, kind: str, message: str) -> None:
-        self._send({"id": rid, "type": "error", "kind": kind, "message": message})
+    def _error(self, rid, kind: str, e) -> None:
+        """An ``error`` message: ``e`` is the exception (its text is the
+        message, its code found by :func:`_code_of`) or a message without a
+        code."""
+        code, params = _code_of(e) if isinstance(e, BaseException) else (None, {})
+        self._send({"id": rid, "type": "error", "kind": kind, "message": str(e),
+                    "code": code, "params": params})
 
     def _internal(self, rid, e: BaseException) -> None:
         traceback.print_exc(file=sys.stderr)
-        self._error(rid, "internal", f"unexpected {e.__class__.__name__}: {e}")
+        self._error(rid, "internal", _Coded("internal", exception=e.__class__.__name__, detail=e))
 
     # -- hello --------------------------------------------------------------
 
@@ -632,10 +851,8 @@ class Worker:
 
         client = req.get("protocol")
         if client is not None and client != PROTOCOL:
-            self._error(rid, "protocol",
-                        f"the viewer speaks protocol {client}, this audace-display "
-                        f"{__version__} speaks protocol {PROTOCOL}: install the "
-                        "audace-display that matches the viewer.")
+            self._error(rid, "protocol", _Coded("protocol_mismatch", client=client,
+                                                version=__version__, protocol=PROTOCOL))
             return
         schema = view_schema()
         dests = {o["dest"] for v in schema.values() for o in v["options"]}
@@ -700,7 +917,7 @@ class Worker:
         for view in VIEWS:
             if view == "scope" and not has_seek:
                 views.append({"name": view, "available": False,
-                              "reason": "the oscilloscope needs invisensing >= 1.1.0."})
+                              **_reason(_Coded("scope_unavailable"))})
             else:
                 views.append({"name": view, "available": True, "reason": None})
 
@@ -719,6 +936,7 @@ class Worker:
             "default_channel": default_channel,
             "default_view": "scope" if mode is Mode.RAW else "heatmap",
             "views": views, "units": units, "warnings": info["warnings"],
+            "warning_codes": info["warning_codes"],
         })
 
     @staticmethod
@@ -728,10 +946,8 @@ class Worker:
             args = parse_request_args("info", path, unit=unit)
             with _captured(), cli._open(args):
                 pass
-        except AudaceDisplayError as e:
-            return {"available": False, "reason": str(e)}
-        except (ValueError, _OptionsError) as e:
-            return {"available": False, "reason": str(e)}
+        except (AudaceDisplayError, ValueError, _OptionsError) as e:
+            return {"available": False, **_reason(e)}
         return {"available": True, "reason": None}
 
     # -- render ---------------------------------------------------------------
@@ -760,7 +976,7 @@ class Worker:
         if not keep_open:
             f.close()
         return {"recorder": rec, "stdout": out["stdout"], "warnings": out["warnings"],
-                "file": f, "args": args}
+                "warning_codes": out["warning_codes"], "file": f, "args": args}
 
     def _render(self, rid, req: dict, job: _Job) -> None:
         view = _field(req, "view", str)
@@ -769,13 +985,14 @@ class Worker:
         unit = req.get("unit") or "rad"
         options = req.get("options") or {}
         if not isinstance(options, dict):
-            raise _OptionsError("'options' must be an object.")
+            raise _OwnOptionsError("options_not_object")
         if view == "scope":
             self._render_scope(rid, job, path, channel, unit, options)
             return
         run = self._run_view(job, view, path, channel, unit, options)
         rec, warns = run["recorder"], run["warnings"]
-        head = {"id": rid, "type": view, "view": view, "warnings": warns}
+        head = {"id": rid, "type": view, "view": view, "warnings": warns,
+                "warning_codes": run["warning_codes"]}
         arrays: list = []
 
         if view == "info":
@@ -817,7 +1034,7 @@ class Worker:
                         stats_text=a["stats_text"], fft_y_label=a["fft_y_label"],
                         fft_log=a["fft_log"], fmax=a["fmax"])
         else:  # pragma: no cover -- build_argv refuses an unknown view first
-            raise _OptionsError(f"unknown view '{view}'.")
+            raise _OwnOptionsError("view_unknown", view=view, known=", ".join(VIEWS))
         self._send(head, tuple(arrays))
 
     def _render_scope(self, rid, job: _Job, path, channel, unit, options) -> None:
@@ -835,15 +1052,14 @@ class Worker:
         first = max(0, min(int(run["args"].line), max(int(params["n_window"]) - 1, 0)))
         frame_head, frame_arrays = self._scope.frame(first)
         head = {"id": rid, "type": "scope", "view": "scope", "warnings": run["warnings"],
-                "session": rid, "frame": frame_head}
+                "warning_codes": run["warning_codes"], "session": rid, "frame": frame_head}
         head.update({k: v for k, v in params.items() if k != "get_y"})
         self._send(head, frame_arrays)
 
     def _scope_frame(self, rid, req: dict) -> None:
         session = self._scope
         if session is None or session.id != req.get("session"):
-            self._error(rid, "protocol", "no such oscilloscope session (render the scope again).")
-            return
+            raise _ProtocolError("scope_session_gone")
         head, arrays = session.frame(_field(req, "local", int))
         head.update(id=rid, type="scope_frame")
         self._send(head, arrays)
@@ -862,7 +1078,7 @@ def serve(stdin_fd: int, stdout) -> int:
             if kind == "eof":
                 return 0
             if kind == "bad":
-                worker._error(None, "protocol", item)
+                worker._error(None, "protocol", item)  # no code: a broken viewer
                 continue
             try:
                 if not worker.handle(item):

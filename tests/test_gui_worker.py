@@ -437,3 +437,241 @@ def test_the_worker_process_speaks_only_the_protocol(phase_dat):
         proc.stdin.close()
         proc.stdout.close()
         proc.stderr.close()
+
+
+# --- Message codes (the viewer renders them in its language) -----------------------
+
+
+@pytest.fixture
+def zero_trigger_phase(tmp_path):
+    """A phase that records its gauge length but no trigger frequency."""
+    path = tmp_path / "notrig.dat"
+    export_dat(path, np.zeros((40, 16), np.float32), sample_rate=62_500_000, trig_frequency=0,
+               content_type=19, card="p21", gauge_length_m=9.6)
+    return path
+
+
+#: Refusals the worker gets from the CLI on a real request: the view, its
+#: options, the code, and parameters the code must carry (a subset).
+CLI_REFUSALS = [
+    ("bandheatmaps", {"f2": 200.0}, "bands_need_f1", {}),
+    ("bandheatmaps", {"f1": 100.0, "f3": 300.0}, "bands_f3_needs_f2", {}),
+    ("bandheatmaps", {"f0": -1.0, "f1": 100.0}, "bands_f0_negative", {}),
+    ("bandheatmaps", {"f1": 200.0, "f2": 100.0}, "bands_not_increasing",
+     {"edges": "0.0, 200.0, 100.0"}),
+    ("bandheatmaps", {"f0": 600.0, "f1": 700.0}, "bands_none_below_nyquist", {}),
+    ("bandheatmaps", {"f1": 100.0, "duration": 0.001}, "bands_too_few_pulses", {}),
+    ("trace", {"position": 1e6}, "position_outside", {"position": "1000000.0"}),
+    ("fft", {"position": "5000"}, "position_outside", {"position": "5000"}),
+    ("fft", {"duration": 0.001}, "fft_too_few_pulses", {}),
+    ("inspect", {"index": 10000}, "index_outside", {"index": "10000", "last": "63"}),
+    ("inspect", {"duration": 0.001}, "inspect_too_few_pulses", {}),
+    ("inspect", {"clip_percentile": 150.0}, "clip_percentile_range", {}),
+    ("heatmap", {"start_time": 99.0}, "empty_time_range",
+     {"p0": "500", "p1": "500", "pulses": "500"}),
+    ("heatmap", {"cmap": "no_such_cmap"}, "colormap_unknown", {"name": "no_such_cmap"}),
+    ("heatmap", {"channel": "bogus"}, "channel_unknown", {"channel": "bogus"}),
+    ("heatmap", {"channel": "magnitude"}, "channel_unavailable",
+     {"channel": "magnitude", "mode": "phase", "available": "phase"}),
+    ("trace", {"position": 1.0, "max_points": 0}, "points_too_few", {}),
+    ("heatmap", {"max_space_bins": 0}, "bins_too_few", {}),
+    ("heatmap", {"max_time_bins": 2.5}, "option_invalid_value",
+     {"flag": "--max-time-bins", "type": "int", "value": "2.5"}),
+    ("heatmap", {"reduce": "median"}, "option_invalid_choice",
+     {"flag": "--reduce", "value": "median"}),
+    ("fft", {"position": "10", "position_range": "1:2"}, "option_not_allowed_with",
+     {"flag": "--position-range", "other": "--position/-p"}),
+    ("trace", {}, "option_required", {"flags": "--position/-p"}),
+]
+
+
+@pytest.mark.parametrize("view,options,code,params", CLI_REFUSALS)
+def test_the_clis_refusals_carry_their_code(phase_dat, view, options, code, params):
+    options = dict(options)
+    channel = options.pop("channel", None)
+    h, _ = Session().result("render", view=view, path=str(phase_dat), channel=channel,
+                            options=options)
+    assert h["type"] == "error" and h["code"] == code, h
+    assert params.items() <= h["params"].items(), h
+    # The message is the CLI's own text, its parameters taken from it.
+    assert gui_worker.message_code(h["message"]) == (code, h["params"])
+
+
+def test_a_refusal_with_its_code_is_the_clis_text(phase_dat, capsys):
+    assert main(["bandheatmaps", str(phase_dat), "--f2", "200"]) == 1
+    printed = capsys.readouterr().err
+    h, _ = Session().result("render", view="bandheatmaps", path=str(phase_dat),
+                            options={"f2": 200.0})
+    assert f"ERROR: {h['message']}" in printed and h["code"] == "bands_need_f1"
+
+
+@needs_gauge
+def test_unit_refusals_carry_their_code(raw_dat, phase_dat, zero_trigger_phase):
+    h, _ = Session().result("render", view="heatmap", path=str(raw_dat), unit="nanostrain")
+    assert h["code"] == "unit_not_a_phase"
+    assert {"option": "--nanostrain", "what": "strain", "unit": "nm/m", "file": "raw.dat",
+            "mode": "raw"}.items() <= h["params"].items()
+    h, _ = Session().result("render", view="heatmap", path=str(phase_dat), unit="nanostrain")
+    assert (h["code"], h["params"]["file"]) == ("unit_no_gauge_length", "phase.dat")
+    # And as the reason a unit is greyed out when the file is opened.
+    units = {u["name"]: u for u in Session().result("open", path=str(raw_dat))[0]["units"]}
+    assert units["nanostrain"]["code"] == "unit_not_a_phase"
+    assert units["nanostrain"]["params"]["what"] == "strain"
+
+
+@needs_rate
+def test_a_strain_rate_without_trigger_frequency_carries_its_code(zero_trigger_phase):
+    h, _ = Session().result("render", view="heatmap", path=str(zero_trigger_phase),
+                            unit="strain_rate")
+    assert (h["code"], h["params"]) == (
+        "strain_rate_no_trigger", {"file": "notrig.dat", "hz": "0"})
+
+
+def test_band_memory_refusal_carries_its_code(phase_dat, monkeypatch):
+    from audace_display import reader
+    real = reader.load_time_matrix
+    monkeypatch.setattr(reader, "load_time_matrix",
+                        lambda *a, **k: real(*a, **{**k, "max_cells": 10}))
+    h, _ = Session().result("render", view="bandheatmaps", path=str(phase_dat),
+                            options={"f1": 100.0})
+    assert h["code"] == "bands_too_much_memory", h
+    assert h["params"]["pulses"] == "500"
+
+
+@pytest.mark.parametrize("view,options,patch,code,params", [
+    ("bandheatmaps", {"f1": 600.0}, None, "warn_band_edge_clamped",
+     {"edge": "600", "nyquist": "500"}),
+    ("fft", {}, ("_FFT_MAX_POSITIONS", 8), "warn_fft_subsampled",
+     {"dropped": "64", "kept": "8", "step": "8"}),
+    ("fft", {"position": "1,2"}, ("_FFT_MAX_CELLS", 10), "warn_fft_memory",
+     {"pulses": "500", "positions": "2"}),
+])
+def test_the_clis_warnings_carry_their_code(phase_dat, monkeypatch, view, options, patch,
+                                            code, params):
+    if patch is not None:
+        monkeypatch.setattr(cli, *patch)
+    h, _ = Session().result("render", view=view, path=str(phase_dat), options=options)
+    assert h["type"] == view and len(h["warning_codes"]) == len(h["warnings"])
+    found = [c for c in h["warning_codes"] if c is not None and c["code"] == code]
+    assert found and params.items() <= found[0]["params"].items(), h["warning_codes"]
+
+
+def test_every_result_has_its_warning_codes(phase_dat, raw_dat):
+    s = Session()
+    for view, path, options in [("info", phase_dat, {}), ("heatmap", phase_dat, {}),
+                                ("trace", phase_dat, {"position": 2.0}),
+                                ("inspect", phase_dat, {}), ("scope", raw_dat, {})]:
+        h, _ = s.result("render", view=view, path=str(path), options=options)
+        assert h["type"] == view and h["warning_codes"] == [None] * len(h["warnings"])
+    h, _ = s.result("open", path=str(phase_dat))
+    assert len(h["warning_codes"]) == len(h["warnings"])
+
+
+#: CLI messages no request reaches on the test files (they need another
+#: invisensing, a broken file or a huge one): their patterns are checked on
+#: the CLI's wording.
+CLI_LITERALS = {
+    "trace_no_data": ("no data read for the trace.", {}),
+    "fft_too_few_samples": ("not enough time samples for an FFT.", {}),
+    "scope_needs_invisensing": (
+        "oscilloscope mode requires invisensing >= 1.1.0 (O(1) per-line seek).", {}),
+    "unit_needs_invisensing": (
+        "--strain-rate needs invisensing >= 1.6.0 (pip install -U invisensing).",
+        {"option": "--strain-rate"}),
+    "unit_refused": ("--nanostrain: bad phase_unit", {"option": "--nanostrain",
+                                                     "detail": "bad phase_unit"}),
+    "empty_distance_range": (
+        "empty spatial slice after --start-distance/--end-distance (d0=5, d1=5, positions=0).",
+        {"d0": "5", "d1": "5", "positions": "0"}),
+    "no_data": ("no data read.", {}),
+    "empty_position_spec": ("empty position spec: ''.", {"spec": ""}),
+    "window_unknown": ("unknown window 'kaiser'. Known: rect, hann, hamming, blackman.",
+                       {"window": "kaiser", "known": "rect, hann, hamming, blackman"}),
+    "warn_bands_memory": (
+        "bandheatmaps: ~1.2 GB to load (1,500,000 pulses x 200 bins). Use --duration / "
+        "--max-pulses / --max-space-bins if memory is limited.",
+        {"gb": "1.2", "pulses": "1,500,000", "bins": "200"}),
+}
+
+
+@pytest.mark.parametrize("code", sorted(CLI_LITERALS))
+def test_the_patterns_of_unreachable_cli_messages(code):
+    text, params = CLI_LITERALS[code]
+    assert gui_worker.message_code(text) == (code, params)
+
+
+def test_a_message_no_pattern_knows_has_no_code():
+    assert gui_worker.message_code("something else entirely.") is None
+    assert gui_worker.message_code("no data read. And more.") is None
+    assert gui_worker._warning_codes(["odd", "no data read."]) == [
+        None, {"code": "no_data", "params": {}}]
+
+
+@pytest.mark.parametrize("cmd,fields,kind,code,params", [
+    ("render", {"view": "heatmap", "options": {"no_such_option": 1}}, "options",
+     "option_unknown", {"view": "heatmap", "option": "no_such_option"}),
+    ("render", {"view": "spectrogram"}, "options", "view_unknown", {"view": "spectrogram"}),
+    ("render", {"view": "heatmap", "options": {"db": "yes"}}, "options", "option_not_bool",
+     {"flag": "--db", "value": "'yes'"}),
+    ("render", {"view": "heatmap", "options": {"max_time_bins": True}}, "options",
+     "option_takes_value", {"flag": "--max-time-bins"}),
+    ("render", {"view": "heatmap", "options": {"max_time_bins": [1]}}, "options",
+     "option_unsupported_value", {"flag": "--max-time-bins", "value": "[1]"}),
+    ("render", {"view": "heatmap", "unit": "furlongs"}, "options", "unit_not_offered",
+     {"unit": "furlongs", "view": "heatmap"}),
+    ("render", {"view": "heatmap", "options": [1]}, "options", "options_not_object", {}),
+    ("render", {"view": "fft", "options": {"position": "abc"}}, "internal", "internal",
+     {"exception": "ValueError"}),
+    ("frobnicate", {}, "protocol", "unknown_command", {"command": "'frobnicate'"}),
+    ("render", {"view": "heatmap", "path": None}, "protocol", "request_field",
+     {"name": "path", "type": "str"}),
+    ("scope_frame", {"session": 42, "local": 0}, "protocol", "scope_session_gone", {}),
+])
+def test_the_workers_own_errors_carry_their_code(phase_dat, cmd, fields, kind, code, params):
+    fields = {"path": str(phase_dat), **fields}
+    if fields["path"] is None:
+        del fields["path"]
+    h, _ = Session().result(cmd, **fields)
+    assert (h["type"], h["kind"], h["code"]) == ("error", kind, code), h
+    assert params.items() <= h["params"].items(), h
+
+
+def test_own_codes_of_hello_open_and_cancel(phase_dat):
+    h, _ = Session().result("hello", protocol=gui_worker.PROTOCOL + 1)
+    assert h["code"] == "protocol_mismatch"
+    assert h["params"]["client"] == str(gui_worker.PROTOCOL + 1)
+    h, _ = Session().result("open", path="/no/such/file.dat")
+    assert (h["code"], h["params"]["path"]) == ("file_not_found", "/no/such/file.dat")
+    assert h["message"].startswith("file not found: ")
+    h, _ = Session(lambda _id: True).result("render", view="heatmap", path=str(phase_dat))
+    assert (h["kind"], h["code"], h["message"]) == ("cancelled", "cancelled", "cancelled.")
+
+
+def test_message_codes_lists_every_code_with_its_parameters():
+    codes = gui_worker.message_codes()
+    assert codes["position_outside"] == ["max", "position"]
+    assert codes["file_not_found"] == ["detail", "path"]
+    # Each own message formats from its parameters alone.
+    for code, template in gui_worker._OWN_MESSAGES.items():
+        assert template.format(**{p: "x" for p in codes[code]})
+    # Every code is exercised by a test of this file.
+    tested = ({c for _v, _o, c, _p in CLI_REFUSALS} | set(CLI_LITERALS)
+              | {"unit_not_a_phase", "unit_no_gauge_length", "strain_rate_no_trigger",
+                 "bands_too_much_memory", "warn_band_edge_clamped", "warn_fft_subsampled",
+                 "warn_fft_memory", "option_unknown", "view_unknown", "option_not_bool",
+                 "option_takes_value", "option_unsupported_value", "unit_not_offered",
+                 "options_not_object", "internal", "unknown_command", "request_field",
+                 "scope_session_gone", "protocol_mismatch", "file_not_found", "cancelled",
+                 "scope_unavailable"})
+    assert tested == set(codes)
+
+
+def test_an_unavailable_oscilloscope_carries_its_code(phase_dat, monkeypatch):
+    import invisensing
+    monkeypatch.delattr(invisensing.File, "seek_lines", raising=False)
+    h, _ = Session().result("open", path=str(phase_dat))
+    (scope,) = [v for v in h["views"] if v["name"] == "scope"]
+    if scope["available"]:  # pragma: no cover -- a File that keeps seek_lines elsewhere
+        pytest.skip("this invisensing cannot be made to lack seek_lines")
+    assert (scope["code"], scope["reason"]) == (
+        "scope_unavailable", "the oscilloscope needs invisensing >= 1.1.0.")
