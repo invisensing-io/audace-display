@@ -86,7 +86,7 @@ fn status_bar(app: &mut GuiApp, ui: &mut Ui) {
         match &app.worker_state {
             WorkerState::Ready => {
                 if let Some(h) = &app.hello {
-                    ui.label(RichText::new("●").color(Color32::from_rgb(80, 190, 90)));
+                    status_dot(ui, Color32::from_rgb(80, 190, 90));
                     ui.label(format!(
                         "audace-display {} · invisensing {} · Python {}",
                         h.audace_display, h.invisensing, h.python
@@ -99,7 +99,7 @@ fn status_bar(app: &mut GuiApp, ui: &mut Ui) {
                 ui.label(format!("Starting `{}`…", app.worker_command()));
             }
             WorkerState::Failed(_) => {
-                ui.label(RichText::new("●").color(ERROR_COLOR));
+                status_dot(ui, ERROR_COLOR);
                 ui.label("The Python worker is not running.");
                 if ui.button("Restart").clicked() {
                     app.restart_worker();
@@ -134,6 +134,11 @@ fn status_bar(app: &mut GuiApp, ui: &mut Ui) {
             ui.label("Waiting for the options to settle…");
         }
     });
+}
+
+fn status_dot(ui: &mut Ui, color: Color32) {
+    let (rect, _) = ui.allocate_exact_size(vec2(12.0, 12.0), egui::Sense::hover());
+    ui.painter().circle_filled(rect.center(), 5.0, color);
 }
 
 /// `1234567` -> `1,234,567`.
@@ -211,7 +216,7 @@ fn options_panel(app: &mut GuiApp, ui: &mut Ui) {
     ui.add_space(8.0);
     ui.horizontal(|ui| {
         let stale = app.is_stale();
-        if ui.add_enabled(app.worker_ready(), egui::Button::new(if stale { "Render ⟳" } else { "Render" })).clicked() {
+        if ui.add_enabled(app.worker_ready(), egui::Button::new(if stale { "Render (changed)" } else { "Render" })).clicked() {
             app.render_now();
         }
         if ui.button("CLI defaults").on_hover_text("Every option of this view back to the CLI's default").clicked()

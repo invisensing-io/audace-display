@@ -62,6 +62,17 @@ audace-display acq.dat --backend pyqtgraph           # same, in auto mode
 audace-display acq.dat --save out.png                # headless PNG
 ```
 
+### Desktop viewer (`gui/`)
+
+A desktop application for Windows and Linux opens a file and offers every
+option of every view in one window: the channel, the unit (rad, strain,
+strain rate), the time and distance window, the decimation, the colours,
+the bands, the spectrum... Zooming a waterfall recomputes the window on
+screen. It is a separate Rust program (Bevy + egui) that runs this package's
+views through `python -m audace_display.gui_worker`, in the Python you point
+it to, so it shows exactly what the CLI computes. Build and usage:
+[gui/README.md](gui/README.md). It is not part of the Python package.
+
 ## Raw mode: real-time oscilloscope
 
 For a **raw** file, the default is an **animated oscilloscope**: each frame draws

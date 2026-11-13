@@ -35,6 +35,8 @@ pub struct StartupArgs {
     pub python: Option<String>,
     pub screenshot: Option<PathBuf>,
     pub sets: Vec<(String, String)>,
+    pub unit: Option<String>,
+    pub zoom: Option<Window>,
 }
 
 impl StartupArgs {
@@ -50,6 +52,11 @@ impl StartupArgs {
                     out.view = Some(View::from_cli(&v).ok_or_else(|| format!("unknown view '{v}'"))?);
                 }
                 "--screenshot" => out.screenshot = Some(PathBuf::from(value("--screenshot")?)),
+                "--unit" => out.unit = Some(value("--unit")?),
+                "--zoom" => {
+                    let z = value("--zoom")?;
+                    out.zoom = Some(parse_zoom(&z).ok_or_else(|| format!("--zoom takes T0:T1 or T0:T1:D0:D1, got '{z}'"))?);
+                }
                 "--set" => {
                     let kv = value("--set")?;
                     let (k, v) = kv.split_once('=').ok_or_else(|| format!("--set takes dest=value, got '{kv}'"))?;
@@ -68,12 +75,23 @@ impl StartupArgs {
     }
 
     pub const USAGE: &'static str = "usage: audace-display-gui [FILE] [--python CMD] [--view VIEW] \
-[--set DEST=VALUE]... [--screenshot OUT.png]\n\
+[--unit UNIT] [--set DEST=VALUE]... [--zoom T0:T1[:D0:D1]] [--screenshot OUT.png]\n\
   FILE            a recording to open (.dat / .h5 / .hdf5 / .tdms / .sgy)\n\
   --python CMD    the Python interpreter for this run (default: the saved setting)\n\
   --view VIEW     info, heatmap, bandheatmaps, fft, trace, scope or inspect\n\
+  --unit UNIT     rad, nanostrain or strain_rate (when the file allows it)\n\
   --set DEST=V    an option of the view, by its CLI name (max_time_bins=500)\n\
+  --zoom T0:T1[:D0:D1]  open the view zoomed on seconds T0..T1 (and metres D0..D1)\n\
   --screenshot P  save the window to P once the view is drawn, then quit";
+}
+
+fn parse_zoom(text: &str) -> Option<Window> {
+    let v: Vec<f64> = text.split(':').map(|s| s.trim().parse::<f64>()).collect::<Result<_, _>>().ok()?;
+    match v[..] {
+        [t0, t1] if t1 > t0 => Some(Window { t0, t1, d0: None, d1: None }),
+        [t0, t1, d0, d1] if t1 > t0 && d1 > d0 => Some(Window { t0, t1, d0: Some(d0), d1: Some(d1) }),
+        _ => None,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -575,14 +593,28 @@ impl GuiApp {
                 .take()
                 .or_else(|| View::from_cli(&desc.default_view))
                 .unwrap_or(View::Heatmap);
+            if let Some(unit) = self.startup.unit.take() {
+                match desc.units.iter().find(|u| u.name == unit) {
+                    Some(u) if u.available => self.unit = unit,
+                    Some(u) => self.notify(Level::Warning, u.reason.clone().unwrap_or_default()),
+                    None => self.notify(Level::Warning, format!("--unit: no unit '{unit}' here")),
+                }
+            }
+            if let Some(z) = self.startup.zoom.take()
+                && self.view.zoom_requests_data()
+            {
+                self.zoom.insert(self.view, z);
+            }
         }
         self.results.clear();
         self.errors.clear();
         self.warnings = desc.warnings.clone();
         // The trace needs a position (the CLI requires one): the middle of the
-        // fibre, the index the CLI's own fallback takes.
+        // fibre, the index the CLI's own fallback takes, unless one is set
+        // that lies on this fibre.
+        let on_fibre = |p: &Value| p.as_f64().is_some_and(|m| (0.0..desc.summary.length_m).contains(&m));
         if let Some(trace) = self.options.get_mut(&View::Trace)
-            && (trace.get("position").is_null() || !same_file)
+            && !on_fibre(trace.get("position"))
         {
             let mid = (desc.summary.positions / 2) as f64 * desc.summary.step_m;
             trace.set("position", json!(mid));
@@ -887,6 +919,11 @@ mod tests {
         assert!(parse(&["--set", "nokey"]).is_err());
         assert!(parse(&["a.dat", "b.dat"]).is_err());
         assert!(parse(&["--bogus"]).is_err());
+        let z = parse(&["--zoom", "1:2.5:100:300", "--unit", "strain_rate"]).unwrap();
+        assert_eq!(z.zoom, Some(Window { t0: 1.0, t1: 2.5, d0: Some(100.0), d1: Some(300.0) }));
+        assert_eq!(z.unit.as_deref(), Some("strain_rate"));
+        assert!(parse(&["--zoom", "2:1"]).is_err());
+        assert!(parse(&["--zoom", "1:2:3"]).is_err());
     }
 
     fn player(n_window: u64, trig: f64) -> (ScopePlayer, Instant) {

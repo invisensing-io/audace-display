@@ -41,6 +41,16 @@ Requires `invisensing >= 1.6.0` (publish it to PyPI first).
   envelopes skip NaN, `inspect` fits its trend to the finite samples, and
   `info` leaves NaN out of its statistics and says how many; data without
   NaN is shown exactly as before.
+- **A desktop viewer for Windows and Linux** (`gui/`, a Rust crate built on
+  its own, not part of the Python package). It opens a file, offers every
+  CLI option of each view (info, heatmap, bandheatmaps, fft, trace, scope,
+  inspect) at the CLI's defaults, the channel and the unit (rad, strain,
+  strain rate), and draws the result; zooming a waterfall or a trace
+  recomputes the decimated window on screen. See `gui/README.md`.
+- **`python -m audace_display.gui_worker`**, the viewer's backend: the CLI's
+  own views (its parser, its file opening, its `do_<view>`) served over a
+  line-delimited JSON protocol with length-framed float arrays, what the CLI
+  would hand to matplotlib, byte for byte. The CLI is unchanged.
 
 ## 0.8.0
 

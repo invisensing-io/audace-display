@@ -117,8 +117,10 @@ pub fn heatmap(ui: &mut Ui, id: &str, img: &Image2d, nav: &mut PlotNav, fit: boo
         }
         pui.pointer_coordinate()
     });
+    // The pointer is reported wherever it is: only this plot's own hover counts.
+    let hovered = resp.response.hovered();
     let mut out = PlotOutcome {
-        hover: resp.inner.map(|p| (p.x, p.y, img.cell_at(p.x, p.y).map(|c| c.2))),
+        hover: resp.inner.filter(|_| hovered).map(|p| (p.x, p.y, img.cell_at(p.x, p.y).map(|c| c.2))),
         reset: resp.response.double_clicked(),
         ..PlotOutcome::default()
     };
