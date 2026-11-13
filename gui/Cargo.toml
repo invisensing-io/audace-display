@@ -1,0 +1,47 @@
+[package]
+name = "audace-display-gui"
+version = "0.1.0"
+edition = "2024"
+# Bevy 0.20's minimum.
+rust-version = "1.97.1"
+description = "Desktop viewer for Audace DAS recordings, driving audace-display's Python worker."
+license = "MIT"
+publish = false
+
+[dependencies]
+# Exact versions: the build is reproducible from Cargo.lock, and an upgrade is
+# a deliberate change. Bevy is trimmed to a window, a renderer and egui:
+# no audio (ALSA), no gamepads (udev), no 3D, no Bevy UI.
+bevy = { version = "=0.20.1", default-features = false, features = [
+    "std",
+    "multi_threaded",
+    "async_executor",
+    "bevy_log",
+    "bevy_asset",
+    "bevy_winit",
+    "bevy_window",
+    "bevy_render",
+    "bevy_core_pipeline",
+    "bevy_camera",
+    "bevy_image",
+    "png",
+    "x11",
+    "wayland",
+] }
+bevy_egui = { version = "=0.43.1", default-features = false, features = ["render", "default_fonts", "manage_clipboard"] }
+egui_plot = "=0.37.0"
+rfd = "=0.18.0"
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.145"
+
+[profile.dev]
+# Bevy is unusable unoptimised; the viewer's own code stays quick to build.
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
