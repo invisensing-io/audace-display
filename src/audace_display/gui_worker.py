@@ -215,9 +215,11 @@ _CLI_MESSAGES = tuple((code, re.compile(pattern, re.DOTALL)) for code, pattern i
     ("unit_no_gauge_length",
      r"(?P<option>--[\w-]+) needs the gauge length the phase was measured over, and "
      r"(?P<file>.+) \('(?P<content>.*)', content type (?P<content_type>-?\d+)\) does not "
-     r"record its gauge length \(a recording made before 2026-11, a MOZART or MOZART_PLUS "
-     r"phase, or a file converted without it\)\. No gauge length is assumed: drop "
-     r"(?P=option) to show the phase in radians\."),
+     r"record its gauge length\. Audace writes the gauge length into a phase file only "
+     r"from the release that adds it, so (?P=option) needs a recording made with that "
+     r"release or a later one; a MOZART or MOZART_PLUS phase and a file converted "
+     r"without it carry none\. No gauge length is assumed: drop (?P=option) to show "
+     r"the phase in radians\."),
     ("strain_rate_no_trigger",
      r"--strain-rate multiplies each line's strain increment by the trigger frequency, and "
      r"(?P<file>.+) does not know its own \(trigger frequency (?P<hz>\S+) Hz\)\. No rate "

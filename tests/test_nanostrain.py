@@ -172,6 +172,9 @@ def test_a_phase_without_its_gauge_is_refused(phase_dat, tmp_path, capsys):
     assert main([str(phase_dat), "--nanostrain", "--save", str(tmp_path / "x.png")]) == 1
     err = capsys.readouterr().err
     assert "does not record its gauge length" in err and "No gauge length is assumed" in err
+    # What is true of every file without it, with no date: Audace writes it
+    # only from the release that adds it.
+    assert "only from the release that adds it" in err and "2026" not in err
     assert "Traceback" not in err
 
 

@@ -278,8 +278,9 @@ audace-display info phase.h5 --nanostrain
 - `NANOSTRAIN_PER_RAD_METRE` is invisensing's constant: 110.37 nm/m per
   rad/m, from `ΔΦ = 2β(n + Cε)·ε·L` at λ = 1550.12 nm and n = 1.46.
 - The gauge length is the one the file records (`info` prints it: `Gauge
-  length : 9.6 m`), the gauge the producer applied, recorded on a phase
-  since 2026-11.
+  length : 9.6 m`), the gauge the producer applied. Audace writes it on a
+  phase only, and only from the release that adds it: `--nanostrain` and
+  `--strain-rate` need a recording made with that release or a later one.
 - Labels: `strain (nm/m)` (colorbar, y axis), `Var[strain] (nm/m)^2` and
   `log10 Var[strain] (nm/m)^2` with `--variance`, `RMS[strain] (nm/m)` for a
   band, `strain (dB, ref=... nm/m)` with `--db`, `Amplitude (nm/m)` for a
@@ -289,9 +290,9 @@ audace-display info phase.h5 --nanostrain
   `magnitude` channel is unchanged.
 - **Refused** (the command exits with `ERROR: ...`, code 1, no traceback):
   a file that holds no phase (raw, I/Q, arctan, amplitude, variances), and a
-  phase that does not record its gauge length (recorded before 2026-11, a
-  MOZART / MOZART_PLUS phase, a file without a content type). No gauge
-  length is ever assumed.
+  phase that does not record its gauge length (every recording made before
+  the Audace release that writes it, a MOZART / MOZART_PLUS phase, a file
+  without a content type). No gauge length is ever assumed.
 
 ## Phase as strain rate, in nm/m/s (0.9.0)
 

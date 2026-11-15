@@ -981,9 +981,11 @@ def _check_phase_unit(f, option: str) -> None:
         raise AudaceDisplayError(
             f"{option} needs the gauge length the phase was measured over, and "
             f"{f.path.name} ('{name}', content type {content_type}) does not record "
-            "its gauge length (a recording made before 2026-11, a MOZART or "
-            "MOZART_PLUS phase, or a file converted without it). No gauge length is "
-            f"assumed: drop {option} to show the phase in radians."
+            "its gauge length. Audace writes the gauge length into a phase file only "
+            f"from the release that adds it, so {option} needs a recording made with "
+            "that release or a later one; a MOZART or MOZART_PLUS phase and a file "
+            "converted without it carry none. No gauge length is assumed: drop "
+            f"{option} to show the phase in radians."
         )
     if option == "--strain-rate" and not reader.line_rate_hz(f) > 0.0:
         raise AudaceDisplayError(
