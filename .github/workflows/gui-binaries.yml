@@ -1,0 +1,164 @@
+# UNTESTED DRAFT (2026-11-15): this workflow has never run on GitHub.
+#
+# Builds the desktop viewer (gui/) for Linux x86_64 and Windows x86_64 and,
+# when asked, attaches the archives to an EXISTING GitHub Release. It is
+# manual only (workflow_dispatch): it publishes nothing to PyPI and is not
+# chained to publish.yml, so a release on PyPI never waits on it.
+#
+# Use, once publish.yml has created the Release of a tag (e.g. v0.9.0):
+#   Actions -> "GUI binaries" -> Run workflow -> tag: v0.9.0
+# or: gh workflow run gui-binaries.yml -f tag=v0.9.0
+#
+# The archives hold the window only. The viewer still needs Python >= 3.10
+# with audace-display (and so invisensing) installed, the version of the same
+# tag or later: it runs `python -m audace_display.gui_worker` (gui/README.md).
+#
+# Why manual and not on the tag push: publish.yml creates the Release only
+# after the `pypi` environment is approved, and a Release created with
+# GITHUB_TOKEN does not trigger other workflows (`on: release` would never
+# fire). Creating the Release here instead would make publish.yml's
+# `gh release create` fail on an existing Release.
+
+name: GUI binaries
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build from and attach to (e.g. v0.9.0)"
+        required: true
+      attach:
+        description: "Attach the archives to the tag's Release (otherwise: workflow artifacts only)"
+        type: boolean
+        default: true
+
+concurrency:
+  group: gui-binaries-${{ inputs.tag }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  # gui/Cargo.toml rust-version (Bevy 0.20's minimum); Cargo.lock pins the rest.
+  RUST_TOOLCHAIN: "1.97.1"
+  # The input reaches the scripts through the environment only, never pasted
+  # into a script by the expression syntax.
+  TAG: ${{ inputs.tag }}
+
+jobs:
+  build:
+    name: build · ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The oldest hosted Ubuntu: the binary links glibc dynamically and
+          # runs on the glibc it was built with or newer (22.04 = 2.35). Built
+          # on 26.04 it needs glibc 2.43. X11, Wayland, xkbcommon and Vulkan
+          # are loaded at run time, not linked.
+          - name: linux-x86_64
+            os: ubuntu-22.04
+            exe: audace-display-gui
+            archive: tar.gz
+          - name: windows-x86_64
+            os: windows-latest
+            exe: audace-display-gui.exe
+            archive: zip
+    steps:
+      - name: The tag is a version tag
+        shell: bash
+        run: |
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::tag '$TAG' is not of the form vX.Y.Z"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v6
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+
+      - name: Rust ${{ env.RUST_TOOLCHAIN }}
+        shell: bash
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+          rustc --version
+
+      - name: System libraries (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config \
+            libx11-dev libxcursor-dev libxrandr-dev libxi-dev libxkbcommon-dev \
+            libwayland-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+
+      # The worker the viewer drives, so the test that talks to a real worker
+      # runs instead of skipping (the first run of the viewer's tests on
+      # Windows). invisensing comes from PyPI: run this after it is published.
+      - name: Python with this tag's audace-display
+        id: py
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install audace-display
+        shell: bash
+        run: python -m pip install --upgrade pip && python -m pip install .
+
+      - name: Test
+        working-directory: gui
+        env:
+          AUDACE_GUI_TEST_PYTHON: ${{ steps.py.outputs.python-path }}
+        run: cargo test --locked
+
+      - name: Build
+        working-directory: gui
+        run: cargo build --locked --release
+
+      - name: Package
+        shell: bash
+        run: |
+          NAME="audace-display-gui-${TAG}-${{ matrix.name }}"
+          mkdir -p "dist/$NAME"
+          cp "gui/target/release/${{ matrix.exe }}" gui/README.md LICENSE "dist/$NAME/"
+          cd dist
+          if [ "${{ matrix.archive }}" = zip ]; then
+            7z a "$NAME.zip" "$NAME" > /dev/null
+          else
+            tar czf "$NAME.tar.gz" "$NAME"
+          fi
+          rm -rf "$NAME"
+          ls -la
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: gui-${{ matrix.name }}
+          path: dist/
+
+  attach:
+    name: attach to the Release
+    needs: build
+    if: inputs.attach
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # required to upload Release assets
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: gui-*
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum audace-display-gui-* > "SHA256SUMS-gui-${TAG}.txt"
+          cat "SHA256SUMS-gui-${TAG}.txt"
+
+      # Fails with a clear message when the tag has no Release yet (publish.yml
+      # creates it once PyPI accepted the upload).
+      - name: Upload to the existing Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" dist/* --clobber --repo "$GITHUB_REPOSITORY"
