@@ -3,3 +3,6 @@
 prune gui
 # Agent worktrees and scratch, never shipped.
 prune .claude
+# The tests ship (setuptools adds tests/test*.py); their fixtures must too, or
+# `pytest` in the unpacked sdist stops at collection (No module named 'conftest').
+include tests/conftest.py
