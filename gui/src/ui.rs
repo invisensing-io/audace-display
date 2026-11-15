@@ -799,10 +799,14 @@ fn notices(app: &mut GuiApp, ui: &mut Ui) {
             Level::Info => ui.visuals().text_color(),
         };
         ui.horizontal(|ui| {
-            if ui.small_button("✕").clicked() {
+            // "×", not "✕": the default fonts have no U+2715 (it drew a box).
+            if ui.small_button("×").clicked() {
                 close = Some(i);
             }
-            ui.label(RichText::new(n.text.render(lang)).color(color));
+            // Wrapped: a label in a horizontal row does not wrap by default,
+            // and a long notice (a refusal of the CLI, a path) widened the
+            // panel past the window, pushing the plot and its colour bar out.
+            ui.add(egui::Label::new(RichText::new(n.text.render(lang)).color(color)).wrap());
         });
     }
     if let Some(i) = close {
