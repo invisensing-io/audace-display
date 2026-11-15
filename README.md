@@ -71,7 +71,7 @@ the bands, the spectrum... Zooming a waterfall recomputes the window on
 screen. It is a separate Rust program (Bevy + egui) that runs this package's
 views through `python -m audace_display.gui_worker`, in the Python you point
 it to, so it shows exactly what the CLI computes. Build and usage:
-[gui/README.md](gui/README.md). It is not part of the Python package.
+[gui/README.md](https://github.com/invisensing-io/audace-display/blob/main/gui/README.md). It is not part of the Python package.
 
 ## Raw mode: real-time oscilloscope
 
@@ -201,7 +201,7 @@ older HDF5) or an older `invisensing`, the actual rate is the requested one and
 every output is unchanged. `audace_display.line_rate_hz(f)` returns the rate
 used. Demod plugins receive it as `trig_frequency_real_hz` (keyword and `meta`
 key); `trig_frequency` stays the requested integer (see
-[docs/DEMOD_PLUGIN.md](docs/DEMOD_PLUGIN.md#requested-vs-actual-trigger-frequency)).
+[docs/DEMOD_PLUGIN.md](https://github.com/invisensing-io/audace-display/blob/main/docs/DEMOD_PLUGIN.md#requested-vs-actual-trigger-frequency)).
 
 ### Corrected absolute times (0.7.0)
 
@@ -424,7 +424,7 @@ environment variables — `demod` and `inspect --script` only:
 audace-display demod raw.dat --script my_demod.py --gain 2.5 --mode fast
 ```
 
-See [`docs/DEMOD_PLUGIN.md`](docs/DEMOD_PLUGIN.md#per-invocation-options-plugin_args).
+See [`docs/DEMOD_PLUGIN.md`](https://github.com/invisensing-io/audace-display/blob/main/docs/DEMOD_PLUGIN.md#per-invocation-options-plugin_args).
 
 **The contract in short:**
 
