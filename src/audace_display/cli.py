@@ -51,7 +51,7 @@ _FFT_MAX_POSITIONS = 256
 
 SUBCOMMANDS = {
     "auto", "info", "heatmap", "bandheatmaps", "fft", "trace", "scope",
-    "demod", "inspect",
+    "demod", "inspect", "gui",
 }
 
 
@@ -1148,7 +1148,7 @@ Simplest form -- no subcommand needed:
     audace-display acq.dat --save out.png  # PNG export (headless mode)
 
 Subcommands for fine control: info, heatmap, bandheatmaps, fft, trace, scope,
-inspect, demod.
+inspect, demod. The desktop viewer: gui (pip install "audace-display[gui]").
 """
 
 _EPILOG = """\
@@ -1187,6 +1187,10 @@ Examples
 
   # Demodulation via an external script (no demod code shipped) -> heatmap
   audace-display demod raw.dat --script my_demod.py --save demod.png
+
+  # The desktop viewer (pip install "audace-display[gui]")
+  audace-display gui acq.dat
+  audace-display gui phase.h5 --lang fr --view heatmap --unit nanostrain
 
 Channels available per file mode:
   raw               raw
@@ -1579,11 +1583,30 @@ def build_parser() -> argparse.ArgumentParser:
     _add_backend(p_dem)
     p_dem.set_defaults(func=lambda a: _open_and_run(do_demod, a), _accepts_plugin_args=True)
 
+    # gui: listed here for the help; `main` hands its arguments to the viewer
+    # as they are (gui_launcher), its own options included.
+    from . import gui_launcher
+    p_gui = _subparser(sub, "gui",
+                       help="Desktop viewer (the audace-display-gui package).",
+                       description=gui_launcher.DESCRIPTION,
+                       epilog=gui_launcher.OPTIONS)
+    p_gui.add_argument("viewer_args", nargs=argparse.REMAINDER, metavar="[FILE] [options]")
+    p_gui.set_defaults(func=lambda a: gui_launcher.main(a.viewer_args))
+
     return p
 
 
 def main(argv: Optional[list[str]] = None) -> int:
     raw_argv = list(sys.argv[1:] if argv is None else argv)
+    # The desktop viewer parses its own options: everything after `gui` is
+    # handed over as it is.
+    if raw_argv[:1] == ["gui"]:
+        from . import gui_launcher
+        try:
+            return gui_launcher.main(raw_argv[1:])
+        except AudaceDisplayError as e:
+            sys.stderr.write(f"ERROR: {e}\n")
+            return 1
     # No explicit subcommand -> auto mode.
     if raw_argv and not raw_argv[0].startswith("-") and raw_argv[0] not in SUBCOMMANDS:
         raw_argv = ["auto"] + raw_argv

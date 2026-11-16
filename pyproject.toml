@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "audace-display"
-version = "0.9.0"
+version = "0.9.1"
 description = "Visualization of Audace DAS acquisition files (.dat / .h5 / .tdms / .sgy)."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -33,6 +33,9 @@ dependencies = [
 [project.optional-dependencies]
 # Fast interactive backend (smooth pan/zoom). Otherwise: matplotlib (always present).
 interactive = ["pyqtgraph>=0.13", "PyQt5>=5.15"]
+# The desktop viewer (`audace-display gui`): a separate package of platform
+# wheels built from gui/, released with this one at the same version.
+gui = ["audace-display-gui==0.9.1"]
 test = ["pytest>=7"]
 
 [project.scripts]

@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.9.1
+
+Released with `audace-display-gui` 0.9.1 (publish that one first: the `gui`
+extra pins it). Still requires `invisensing >= 1.6.0`.
+
+- **`audace-display gui [FILE] [options]`: the desktop viewer.** It finds the
+  viewer's executable (`$AUDACE_DISPLAY_GUI`, the scripts directory of this
+  Python's environment, then `PATH`) and starts it with the current
+  interpreter (`--python`, unless one is given), so the window's worker is
+  this audace-display. The options after `gui` are the viewer's own, passed as
+  they are; `--help` is printed by the CLI (the viewer has no console on
+  Windows). Without the viewer: one `ERROR:` line saying to run `pip install
+  "audace-display[gui]"`, exit code 1.
+- **Extra `gui`**: `pip install "audace-display[gui]"` installs
+  `audace-display-gui==0.9.1`, the viewer in platform wheels (Linux x86_64 and
+  aarch64, Windows x64, macOS arm64), a separate package built from `gui/` by
+  `.github/workflows/publish-gui.yml` on a `gui-v*` tag. This package stays
+  pure Python. The viewer's changes: `gui/CHANGELOG.md` (the newest line of a
+  waterfall at the top, as here).
+- Tests pin the orientation of the waterfalls: the newest line at the top,
+  time increasing upwards, in the matplotlib heatmap and band panels and the
+  pyqtgraph heatmap (unchanged).
+
 ## 0.9.0
 
 Requires `invisensing >= 1.6.0` (publish it to PyPI first).

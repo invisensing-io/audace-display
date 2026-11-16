@@ -22,13 +22,15 @@ resolution without ever being fully loaded into memory.
 ```bash
 pip install audace-display              # matplotlib (static + interactive + PNG)
 pip install audace-display[interactive] # + pyqtgraph backend (fast interactive)
+pip install "audace-display[gui]"       # + the desktop viewer (audace-display gui)
 ```
 
 Dependencies: `numpy`, `matplotlib`, `invisensing` >= 1.6.0 (gauge length and
 phase as strain and strain rate since 1.6.0; content-type registry revision 4 since 1.5.0;
 corrected line times since 1.4.0; actual trigger frequency since 1.3.0; O(1)
 seek and TDMS/SEG-Y streaming since 1.1.0). Optional
-`interactive` extra: `pyqtgraph` + `PyQt5`.
+`interactive` extra: `pyqtgraph` + `PyQt5`; optional `gui` extra: the desktop
+viewer, `audace-display-gui` at the same version.
 
 ## Quick start
 
@@ -62,16 +64,30 @@ audace-display acq.dat --backend pyqtgraph           # same, in auto mode
 audace-display acq.dat --save out.png                # headless PNG
 ```
 
-### Desktop viewer (`gui/`)
+### Desktop viewer
 
-A desktop application for Windows and Linux opens a file and offers every
-option of every view in one window: the channel, the unit (rad, strain,
-strain rate), the time and distance window, the decimation, the colours,
-the bands, the spectrum... Zooming a waterfall recomputes the window on
-screen. It is a separate Rust program (Bevy + egui) that runs this package's
-views through `python -m audace_display.gui_worker`, in the Python you point
-it to, so it shows exactly what the CLI computes. Build and usage:
-[gui/README.md](https://github.com/invisensing-io/audace-display/blob/main/gui/README.md). It is not part of the Python package.
+```bash
+pip install "audace-display[gui]"
+audace-display gui acq.dat
+audace-display gui phase.h5 --lang fr --view heatmap --unit nanostrain
+```
+
+A desktop application for Windows, Linux and macOS opens a file and offers
+every option of every view in one window: the channel, the unit (rad,
+strain, strain rate), the time and distance window, the decimation, the
+colours, the bands, the spectrum... Zooming a waterfall recomputes the window
+on screen; the newest line is at the top, as in the figures above. In English
+or French (`--lang`, or Settings).
+
+It is a separate package, `audace-display-gui`: a Rust program (Bevy + egui)
+in platform wheels (Linux x86_64 and aarch64, Windows x64, macOS arm64),
+installed by the `gui` extra at the same version. `audace-display gui [FILE]
+[options]` finds it in the environment and starts it with the current Python,
+whose `python -m audace_display.gui_worker` runs this package's views: the
+window shows exactly what the CLI computes. Without the package, the command
+says to run `pip install "audace-display[gui]"`. Options, settings and
+building from source:
+[gui/README.md](https://github.com/invisensing-io/audace-display/blob/main/gui/README.md).
 
 ## Raw mode: real-time oscilloscope
 
