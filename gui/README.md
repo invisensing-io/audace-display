@@ -1,10 +1,10 @@
 # audace-display-gui
 
 A desktop viewer for Audace DAS recordings (`.dat`, `.h5` / `.hdf5`,
-`.tdms`, `.sgy`), for Windows and Linux. It opens a file, lets you pick the
-view and every option the `audace-display` CLI offers for it, and draws the
-result: waterfalls, band waterfalls, spectra, time traces, the oscilloscope,
-the single-location inspection and the file's metadata.
+`.tdms`, `.sgy`), for Windows, Linux and macOS. It opens a file, lets you
+pick the view and every option the `audace-display` CLI offers for it, and
+draws the result: waterfalls, band waterfalls, spectra, time traces, the
+oscilloscope, the single-location inspection and the file's metadata.
 
 The window is a [Bevy](https://bevy.org) application with an
 [egui](https://github.com/emilk/egui) interface (`bevy_egui`, `egui_plot`,
@@ -15,27 +15,59 @@ the CLI computes**, bit for bit (the worker runs the CLI's `do_<view>`
 functions and hands their arrays over instead of drawing them with
 matplotlib).
 
-This folder is not part of the Python package: the sdist and the wheel of
-audace-display leave it out (`MANIFEST.in`, `packages.find` under `src/`).
+## Install
 
-## What you need
+```bash
+pip install "audace-display[gui]"
+audace-display gui                       # then Open…
+audace-display gui phase.h5 --lang fr --view heatmap --unit nanostrain
+```
+
+The `gui` extra of [audace-display](https://pypi.org/project/audace-display/)
+installs this package, `audace-display-gui`, at the same version. It holds
+the viewer's executable only, in one wheel per platform for every Python
+(`py3-none-<platform>`): Linux x86_64 and aarch64 (glibc 2.28 or later),
+Windows x64, macOS on Apple silicon (built, not yet tried on a Mac). On
+another platform pip builds it from the sdist, which needs Rust 1.97.1 or
+later (below).
+
+`audace-display gui [FILE] [options]` finds the executable in the
+environment and starts it with the same Python (`--python`), so the window
+computes with that audace-display; the options are the viewer's own (see
+*Command line* below). Started on its own (`audace-display-gui`,
+also on the environment's `PATH`), the viewer runs the interpreter of its
+Settings (`python3`, or `py -3` on Windows, by default).
+
+To draw the window the viewer needs a Vulkan driver (`mesa-vulkan-drivers`,
+or the GPU vendor's) or OpenGL on Linux, DirectX 12 or Vulkan on Windows,
+Metal on macOS. X11, Wayland, xkbcommon and Vulkan are loaded at run time:
+the Linux executable links only the C library and `libgcc_s`. The native file
+dialog goes through the XDG desktop portal (GNOME, KDE and most desktops run
+it); without one, type the path in the bar or drop the file on the window.
+
+## Build from source
 
 1. **Python 3.10 or later with audace-display and invisensing installed**, in
    the interpreter the viewer will run (it does not use a Python of its own):
 
    ```bash
-   python3 -m pip install audace-display          # from PyPI, once released with the GUI worker
-   python3 -m pip install -e /path/to/audace-display   # or from a checkout of this repository
+   python3 -m pip install audace-display
+   python3 -m pip install -e /path/to/audace-display   # or from a checkout of the repository
    ```
 
-   invisensing comes with it (`invisensing >= 1.6.0`; `--strain-rate` needs
-   the invisensing that has `phase_unit="strain_rate"`). On Windows use the
+   invisensing comes with it (`invisensing >= 1.6.0`). On Windows use the
    same commands with `py -3` instead of `python3`. A virtual environment is
    fine: give the viewer its interpreter's full path (below).
 
-2. **To build the viewer: Rust 1.97.1 or later** (Bevy 0.20's minimum),
-   installed with [rustup](https://rustup.rs). `rustup update stable` brings
-   an older toolchain up to date.
+2. **Rust 1.97.1 or later** (Bevy 0.20's minimum), installed with
+   [rustup](https://rustup.rs). `rustup update stable` brings an older
+   toolchain up to date.
+
+The wheels are built with [maturin](https://www.maturin.rs) from
+`gui/pyproject.toml` (`bindings = "bin"`):
+`maturin build --release --locked --compatibility manylinux_2_28` in the
+`quay.io/pypa/manylinux_2_28_x86_64` image gives the Linux wheel; the
+release workflow is `.github/workflows/publish-gui.yml` (tag `gui-v<version>`).
 
 ## Build and run on Linux
 
@@ -51,10 +83,7 @@ sudo apt install build-essential pkg-config \
 
 X11, Wayland and xkbcommon are loaded at run time, so only their run-time
 libraries are strictly needed; the `-dev` packages above cover every
-distribution layout. A Vulkan driver (`mesa-vulkan-drivers`, or the GPU
-vendor's) or OpenGL is needed to draw the window. The native file dialog
-goes through the XDG desktop portal (GNOME, KDE and most desktops run it);
-without one, type the path in the bar or drop the file on the window.
+distribution layout.
 
 ```bash
 cd gui

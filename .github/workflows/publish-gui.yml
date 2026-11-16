@@ -1,0 +1,301 @@
+name: Publish the desktop viewer to PyPI
+
+# audace-display-gui: the desktop viewer (gui/) on PyPI, its binary in
+# platform wheels (maturin, bindings = "bin", tagged py3-none-<platform>: one
+# wheel per platform for every Python), plus the sdist. `pip install
+# "audace-display[gui]"` installs it; `audace-display gui` starts it.
+#
+#   git tag -a gui-v0.9.1 -F notes.txt   # annotated: its message is the release text
+#   git push origin gui-v0.9.1
+#
+# The tag is `gui-v<version>`, never `v<version>`: publish.yml publishes
+# audace-display on `v*`, which `gui-v*` does not match (a tag filter matches
+# from the start of the name). Publish this one first: audace-display's `gui`
+# extra pins audace-display-gui at the same version.
+#
+# 1. plan: the tag matches gui/Cargo.toml's version; the platforms to build.
+# 2. build: the viewer's tests on the runner, then the wheel and an archive of
+#    the bare binary (the same file the wheel holds) per platform:
+#      Linux x86_64 and aarch64 (manylinux_2_28, in the PyPA/rust-cross
+#      images), Windows x64 (MSVC), macOS arm64 (macos-15).
+#    The sdist is built once.
+# 3. publish: PyPI with Trusted Publishing (OIDC, no token stored). The
+#    publisher registered on PyPI: project audace-display-gui, owner
+#    invisensing-io, repo audace-display, workflow publish-gui.yml,
+#    environment pypi.
+# 4. github-release: the Release of the tag, its text the annotated tag's
+#    message, its assets the wheels, the sdist, the archives and their
+#    SHA-256 sums.
+#
+# workflow_dispatch (Actions tab, or `gh workflow run publish-gui.yml -f
+# platforms=windows`) builds and uploads the artifacts only: nothing is
+# published, whatever the input.
+
+on:
+  push:
+    tags:
+      - "gui-v*"
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: "Platforms to build. A manual run only builds and uploads artifacts: it never publishes."
+        type: choice
+        options: [all, windows, linux, macos]
+        default: all
+
+# One release pipeline per ref at a time.
+concurrency:
+  group: publish-gui-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  # gui/Cargo.toml rust-version (Bevy 0.20's minimum); Cargo.lock pins the rest.
+  RUST_TOOLCHAIN: "1.97.1"
+  MATURIN_VERSION: "1.16.0"
+
+jobs:
+  plan:
+    name: plan
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: The viewer's version
+        id: version
+        run: |
+          VERSION=$(python3 -c 'import tomllib; print(tomllib.load(open("gui/Cargo.toml", "rb"))["package"]["version"])')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "gui/Cargo.toml: $VERSION"
+
+      - name: The tag matches the viewer's version
+        if: github.event_name == 'push'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if [ "${GITHUB_REF_NAME}" != "gui-v${VERSION}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match gui/Cargo.toml's version ${VERSION} (expected gui-v${VERSION})"
+            exit 1
+          fi
+
+      # The input reaches the script through the environment only.
+      - name: Platforms
+        id: matrix
+        env:
+          PLATFORMS: ${{ github.event_name == 'push' && 'all' || inputs.platforms }}
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os
+          everything = [
+              {"name": "linux-x86_64", "family": "linux", "os": "ubuntu-latest",
+               "target": "x86_64-unknown-linux-gnu", "manylinux": "2_28", "test": True},
+              # Cross-built (rust-cross manylinux_2_28 image), as python-lib's
+              # aarch64 wheels: its tests are the x86_64 runner's.
+              {"name": "linux-aarch64", "family": "linux", "os": "ubuntu-latest",
+               "target": "aarch64-unknown-linux-gnu", "manylinux": "2_28", "test": False},
+              {"name": "windows-x86_64", "family": "windows", "os": "windows-latest",
+               "target": "x86_64-pc-windows-msvc", "manylinux": "", "test": True},
+              # macos-14 is retired (November 2026).
+              {"name": "macos-arm64", "family": "macos", "os": "macos-15",
+               "target": "aarch64-apple-darwin", "manylinux": "", "test": True},
+          ]
+          wanted = os.environ["PLATFORMS"]
+          include = [p for p in everything if wanted in ("all", p["family"])]
+          print("matrix=" + json.dumps({"include": include}))
+          PY
+
+  build:
+    name: build · ${{ matrix.name }}
+    needs: plan
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+
+      # The worker the tests talk to, and `python` for the archive step on
+      # every runner (Windows has no `python3`).
+      - name: Python
+        id: py
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      # --- The viewer's tests, on the runner itself -----------------------
+      - name: Rust ${{ env.RUST_TOOLCHAIN }}
+        if: matrix.test
+        shell: bash
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+          rustc --version
+
+      # X11, Wayland, xkbcommon and Vulkan are loaded at run time, not
+      # linked; the -dev packages only cover a crate whose build script asks
+      # pkg-config.
+      - name: System libraries (Linux)
+        if: matrix.test && runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config \
+            libx11-dev libxcursor-dev libxrandr-dev libxi-dev libxkbcommon-dev \
+            libwayland-dev
+
+      # The worker the viewer drives, so the test that talks to a real worker
+      # runs instead of skipping: this commit's audace-display (invisensing
+      # from PyPI).
+      - name: Install audace-display
+        if: matrix.test
+        shell: bash
+        run: python -m pip install --upgrade pip && python -m pip install .
+
+      - name: Test the viewer
+        if: matrix.test
+        working-directory: gui
+        env:
+          AUDACE_GUI_TEST_PYTHON: ${{ steps.py.outputs.python-path }}
+        run: cargo test --locked
+
+      # --- The wheel ------------------------------------------------------
+      # On Windows the MSVC toolchain of the runner (cl.exe, ml64) compiles
+      # blake3's C and assembly, which a cross check from Linux cannot.
+      - name: Build the wheel (maturin)
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: gui
+          maturin-version: ${{ env.MATURIN_VERSION }}
+          rust-toolchain: ${{ env.RUST_TOOLCHAIN }}
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux || 'auto' }}
+          args: --release --locked --out dist
+          sccache: false
+
+      - name: Archive of the binary
+        shell: bash
+        run: |
+          WHEEL=$(ls gui/dist/*.whl)
+          echo "wheel: $WHEEL"
+          python -m zipfile -e "$WHEEL" unpacked
+          BIN=$(find unpacked -path '*.data/scripts/*' -type f | head -1)
+          test -n "$BIN" || { echo "::error::no binary in $WHEEL"; exit 1; }
+          NAME="audace-display-gui-${VERSION}-${{ matrix.name }}"
+          mkdir -p "archive/$NAME"
+          cp "$BIN" gui/README.md gui/LICENSE "archive/$NAME/"
+          chmod +x "archive/$NAME/$(basename "$BIN")"
+          mkdir -p gui/archives
+          if [ "${{ runner.os }}" = Windows ]; then
+            (cd archive && 7z a "../gui/archives/$NAME.zip" "$NAME" > /dev/null)
+          else
+            tar -C archive -czf "gui/archives/$NAME.tar.gz" "$NAME"
+          fi
+          ls -la gui/dist gui/archives
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheels-${{ matrix.name }}
+          path: gui/dist/*.whl
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: archive-${{ matrix.name }}
+          path: gui/archives/*
+
+  sdist:
+    name: sdist
+    needs: plan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build the sdist (maturin)
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: gui
+          maturin-version: ${{ env.MATURIN_VERSION }}
+          command: sdist
+          args: --out dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheels-sdist
+          path: gui/dist/*.tar.gz
+
+  publish:
+    name: Publish to PyPI (trusted publishing)
+    needs: [plan, build, sdist]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/gui-v')
+    environment:
+      name: pypi
+      url: https://pypi.org/p/audace-display-gui
+    permissions:
+      id-token: write   # required for OIDC trusted publishing
+    steps:
+      - name: Download the wheels and the sdist
+        uses: actions/download-artifact@v8
+        with:
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
+
+      - name: What is about to be published
+        run: ls -la dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          skip-existing: true
+
+  github-release:
+    name: Create the GitHub Release
+    needs: publish
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/gui-v')
+    permissions:
+      contents: write   # required to create a Release
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      # actions/checkout replaces the pushed tag by a lightweight tag on its
+      # commit, so `%(contents)` would give the commit message. Fetch the tag
+      # object again so its own message is read.
+      - name: Fetch the annotated tag
+        run: git fetch --force origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+
+      - name: Download the wheels, the sdist and the archives
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum * > "SHA256SUMS-${GITHUB_REF_NAME}.txt"
+          cat "SHA256SUMS-${GITHUB_REF_NAME}.txt"
+
+      # A re-run after a Release exists uploads the assets again instead of
+      # failing.
+      - name: Create the GitHub Release with the tag's message
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          elif [ "$(git cat-file -t "$TAG")" = "tag" ]; then
+            git tag -l --format='%(contents)' "$TAG" > release-notes.md
+            gh release create "$TAG" --title "$TAG" --notes-file release-notes.md dist/*
+          else
+            echo "::warning::$TAG is a lightweight tag: release notes generated from the commits"
+            gh release create "$TAG" --title "$TAG" --generate-notes dist/*
+          fi

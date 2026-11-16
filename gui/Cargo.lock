@@ -404,7 +404,7 @@ dependencies = [
 
 [[package]]
 name = "audace-display-gui"
-version = "0.1.0"
+version = "0.9.1"
 dependencies = [
  "bevy",
  "bevy_egui",

@@ -1,0 +1,45 @@
+# audace-display-gui on PyPI: the desktop viewer's binary in platform wheels
+# (maturin, bindings = "bin"): `py3-none-<platform>`, one wheel per platform
+# for every Python. No Python code: pip puts the executable in the
+# environment's scripts directory, where `audace-display gui` (the
+# audace-display package, extra `gui`) finds it and starts it with its own
+# interpreter. The version is gui/Cargo.toml's; it is released with
+# audace-display at the same version (.github/workflows/publish-gui.yml).
+
+[build-system]
+requires = ["maturin>=1.9,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "audace-display-gui"
+dynamic = ["version"]
+description = "Desktop viewer for Audace DAS recordings, driving audace-display's Python worker (installed by audace-display[gui])."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Invisensing" }]
+keywords = ["DAS", "fiber-optic-sensing", "visualization", "audace", "invisensing", "waterfall", "viewer"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: X11 Applications",
+    "Environment :: Win32 (MS Windows)",
+    "Environment :: MacOS X",
+    "Intended Audience :: Science/Research",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: MacOS",
+    "Programming Language :: Rust",
+    "Topic :: Scientific/Engineering :: Visualization",
+]
+
+[project.urls]
+Homepage = "https://github.com/invisensing-io/audace-display"
+Source = "https://github.com/invisensing-io/audace-display/tree/main/gui"
+Issues = "https://github.com/invisensing-io/audace-display/issues"
+Changelog = "https://github.com/invisensing-io/audace-display/blob/main/gui/CHANGELOG.md"
+
+[tool.maturin]
+bindings = "bin"
+# Cargo.lock pins every crate: a wheel is built from exactly what was tested.
+locked = true
