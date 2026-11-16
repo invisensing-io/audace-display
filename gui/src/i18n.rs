@@ -839,9 +839,42 @@ pub fn localize_number(lang: Lang, s: &str) -> String {
     }
 }
 
-/// `x` with `sig` significant digits (`%g`), in `lang`.
+/// `x` with `sig` significant digits (`%g`), in `lang`, its thousands
+/// grouped as [`count`] groups them: `10,000` / `10 000`, `75,007.5` /
+/// `75 007,5`. An exponent form (`1.235e5`) is unchanged.
 pub fn num(lang: Lang, x: f64, sig: usize) -> String {
-    localize_number(lang, &fmt_g(x, sig))
+    localize_number(lang, &group_thousands(&fmt_g(x, sig)))
+}
+
+/// A number as `%g` writes it with a comma between the thousands of its
+/// integer part (`10000.5` -> `10,000.5`); anything else unchanged.
+fn group_thousands(s: &str) -> String {
+    let (sign, rest) = match s.as_bytes().first() {
+        Some(b'+' | b'-') => s.split_at(1),
+        _ => ("", s),
+    };
+    let (int, frac) = match rest.split_once('.') {
+        Some((i, f)) => (i, Some(f)),
+        None => (rest, None),
+    };
+    if int.len() <= 3
+        || !int.bytes().all(|b| b.is_ascii_digit())
+        || frac.is_some_and(|f| !f.bytes().all(|b| b.is_ascii_digit()))
+    {
+        return s.to_string();
+    }
+    let mut out = String::from(sign);
+    for (i, c) in int.chars().enumerate() {
+        if i > 0 && (int.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    if let Some(f) = frac {
+        out.push('.');
+        out.push_str(f);
+    }
+    out
 }
 
 /// An integer with its thousands grouped: `1,234,567` / `1 234 567`.
@@ -1158,6 +1191,24 @@ mod tests {
         assert_eq!(count(Lang::Fr, 999), "999");
         assert_eq!(num(Lang::Fr, 2.795755, 4), "2,796");
         assert_eq!(num(Lang::En, 2.795755, 4), "2.796");
+    }
+
+    #[test]
+    fn numbers_group_their_thousands_like_counts() {
+        // The line rate of the info panel: 10000 Hz was written ungrouped.
+        assert_eq!(num(Lang::En, 10_000.0, 10), "10,000");
+        assert_eq!(num(Lang::Fr, 10_000.0, 10), "10\u{a0}000");
+        assert_eq!(num(Lang::En, 75_007.500_8, 10), "75,007.5008");
+        assert_eq!(num(Lang::Fr, 75_007.500_8, 10), "75\u{a0}007,5008");
+        assert_eq!(num(Lang::Fr, -1_234_567.0, 10), "-1\u{a0}234\u{a0}567");
+        assert_eq!(num(Lang::En, 1536.0, 6), count(Lang::En, 1536));
+        assert_eq!(num(Lang::Fr, 999.5, 6), "999,5");
+        assert_eq!(
+            num(Lang::En, 123_456.0, 4),
+            "1.235e5",
+            "an exponent form is kept"
+        );
+        assert_eq!(num(Lang::En, f64::NAN, 4), "NaN");
     }
 
     fn worker(text: &str, code: &str, params: &[(&str, &str)]) -> WorkerText {
