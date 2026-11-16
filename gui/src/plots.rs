@@ -1,6 +1,7 @@
 //! Plot widgets: waterfalls with their colour bar, line plots. Waterfalls put
-//! time on the vertical axis running downwards and distance on the
-//! horizontal axis.
+//! distance on the horizontal axis and time on the vertical axis, the newest
+//! line at the top: time increases upwards and the age of a line downwards,
+//! as in the CLI's figure (matplotlib's `origin="lower"`).
 
 use std::f32::consts::FRAC_PI_2;
 
@@ -119,8 +120,9 @@ fn track_bounds(
     }
 }
 
-/// A waterfall: the image in plot coordinates (distance, time downwards).
-/// `label` is the quantity of the colour bar, in `lang`.
+/// A waterfall: the image in plot coordinates (distance, time), the newest
+/// line at the top (see [`Image2d::tile_pixels`]). `label` is the quantity
+/// of the colour bar, in `lang`.
 #[allow(clippy::too_many_arguments)]
 pub fn heatmap(
     ui: &mut Ui,
@@ -137,7 +139,6 @@ pub fn heatmap(
     let plot = Plot::new(id)
         .width(size.x)
         .height(size.y)
-        .invert_y(true)
         .x_axis_label(lang.t(Msg::AxisDistance))
         .y_axis_label(lang.t(Msg::AxisTime))
         .allow_double_click_reset(false)
@@ -480,6 +481,7 @@ pub fn fit_curves(curves: &[(&[f64], &[f64])], x0: f64, x1: f64, log_y: bool) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy_egui::egui::pos2;
 
     #[test]
     fn formats_like_percent_g() {
@@ -516,6 +518,161 @@ mod tests {
         assert_eq!(xs.len(), 10);
         assert_eq!(los[9], -999.0);
         assert_eq!(his[9], 999.0);
+    }
+
+    /// One frame of the waterfall: what was painted, and the textures
+    /// uploaded for it.
+    struct Frame {
+        output: egui::FullOutput,
+        uploaded: Vec<(egui::TextureId, std::sync::Arc<egui::ColorImage>)>,
+        outcome: PlotOutcome,
+    }
+
+    /// Draws `img` as the waterfall for one frame of an 800 x 600 window,
+    /// the pointer at `pointer`.
+    fn waterfall_frame(
+        ctx: &egui::Context,
+        img: &Image2d,
+        nav: &mut PlotNav,
+        fit: bool,
+        pointer: Option<Pos2>,
+    ) -> Frame {
+        let mut input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0))),
+            ..Default::default()
+        };
+        input.events.extend(pointer.map(egui::Event::PointerMoved));
+        let mut outcome = PlotOutcome::default();
+        let mut output = ctx.run_ui(input, |ui| {
+            let size = vec2(400.0, 400.0);
+            outcome = heatmap(ui, "orientation", img, "v", nav, fit, None, size, Lang::En);
+        });
+        let uploaded = output
+            .textures_delta
+            .set
+            .iter()
+            .flat_map(|(id, deltas)| deltas.iter().map(move |d| (*id, d)))
+            .map(|(id, delta)| match &delta.image {
+                egui::ImageData::Color(image) => (id, image.clone()),
+            })
+            .collect();
+        // No renderer applies them: egui insists they are let go explicitly.
+        output.textures_delta.clear();
+        Frame {
+            output,
+            uploaded,
+            outcome,
+        }
+    }
+
+    /// Where the texture `id` was drawn: its screen rectangle, and the screen
+    /// height of its first row (`uv.y = 0`).
+    fn drawn(ctx: &egui::Context, frame: &Frame, id: egui::TextureId) -> (Rect, f32) {
+        let vertices: Vec<egui::epaint::Vertex> = ctx
+            .tessellate(frame.output.shapes.clone(), frame.output.pixels_per_point)
+            .into_iter()
+            .filter_map(|p| match p.primitive {
+                egui::epaint::Primitive::Mesh(m) if m.texture_id == id => Some(m.vertices),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        assert!(!vertices.is_empty(), "the texture {id:?} was not drawn");
+        let points: Vec<Pos2> = vertices.iter().map(|v| v.pos).collect();
+        let first_row = vertices
+            .iter()
+            .filter(|v| v.uv.y == 0.0)
+            .map(|v| v.pos.y)
+            .fold(f32::INFINITY, f32::min);
+        (Rect::from_points(&points), first_row)
+    }
+
+    /// The pointer's readout at `at`, a few frames after it moved there.
+    fn readout_at(
+        ctx: &egui::Context,
+        img: &Image2d,
+        nav: &mut PlotNav,
+        at: Pos2,
+    ) -> (f64, f64, Option<f32>) {
+        for _ in 0..4 {
+            if let Some(h) = waterfall_frame(ctx, img, nav, false, Some(at))
+                .outcome
+                .hover
+            {
+                return h;
+            }
+        }
+        panic!("no readout at {at:?}");
+    }
+
+    #[test]
+    fn the_newest_line_is_drawn_at_the_top_as_in_the_cli() {
+        // Row r holds the value r: row 3, the last time sample, is white.
+        let ctx = egui::Context::default();
+        let (rows, cols) = (4, 3);
+        let data = (0..rows * cols).map(|i| (i / cols) as f32).collect();
+        let img = Image2d::grey_for_tests(
+            &ctx,
+            (rows, cols),
+            data,
+            ([0.0, 4.0], [0.0, 30.0]),
+            (0.0, 3.0),
+        );
+        let mut nav = PlotNav::default();
+        let frame = waterfall_frame(&ctx, &img, &mut nav, true, None);
+        let id = img.tiles[0].texture.id();
+        // The texture's first row is the last time sample...
+        let uploaded = frame
+            .uploaded
+            .iter()
+            .find(|(t, _)| *t == id)
+            .map(|(_, image)| image.clone())
+            .expect("the waterfall's texture is uploaded");
+        assert_eq!(uploaded.size, [cols, rows]);
+        assert!(uploaded.pixels[..cols].iter().all(|&c| c == Color32::WHITE));
+        assert!(
+            uploaded.pixels[(rows - 1) * cols..]
+                .iter()
+                .all(|&c| c == Color32::BLACK)
+        );
+        // ...and that row is drawn at the top of the plot.
+        let (rect, first_row_y) = drawn(&ctx, &frame, id);
+        assert_eq!(first_row_y, rect.top());
+        // The pointer on the top row reads the newest line, on the bottom row
+        // the oldest: time increases upwards, as on the CLI's axis.
+        let row_height = rect.height() / rows as f32;
+        let top_row = pos2(rect.center().x, rect.top() + row_height / 2.0);
+        let (d, t, v) = readout_at(&ctx, &img, &mut nav, top_row);
+        assert!((0.0..30.0).contains(&d), "d = {d}");
+        assert!((3.0..4.0).contains(&t), "t = {t} on the top row");
+        assert_eq!(v, Some(3.0));
+        let bottom_row = pos2(rect.center().x, rect.bottom() - row_height / 2.0);
+        let (_, t, v) = readout_at(&ctx, &img, &mut nav, bottom_row);
+        assert!((0.0..1.0).contains(&t), "t = {t} on the bottom row");
+        assert_eq!(v, Some(0.0));
+    }
+
+    #[test]
+    fn the_tile_of_the_latest_lines_is_drawn_above_the_others() {
+        let ctx = egui::Context::default();
+        let rows = crate::views::TILE + 5;
+        let img = Image2d::grey_for_tests(
+            &ctx,
+            (rows, 1),
+            (0..rows).map(|r| r as f32).collect(),
+            ([0.0, rows as f64], [0.0, 1.0]),
+            (0.0, rows as f64 - 1.0),
+        );
+        assert_eq!(img.tiles.len(), 2);
+        let mut nav = PlotNav::default();
+        let frame = waterfall_frame(&ctx, &img, &mut nav, true, None);
+        let (earliest, _) = drawn(&ctx, &frame, img.tiles[0].texture.id());
+        let (latest, top_row_y) = drawn(&ctx, &frame, img.tiles[1].texture.id());
+        assert!(
+            latest.bottom() <= earliest.top() + 0.5,
+            "{latest:?} above {earliest:?}"
+        );
+        assert_eq!(top_row_y, latest.top());
     }
 
     #[test]

@@ -24,7 +24,9 @@ pub struct Tile {
     pub c1: usize,
 }
 
-/// A colour-mapped field: rows are time (top = earliest), columns distance.
+/// A colour-mapped field: rows are time (row 0 = earliest), columns distance.
+/// A waterfall draws it with its last row, the newest, at the top, as the
+/// CLI's figure does (`origin="lower"`): time increases upwards.
 pub struct Image2d {
     pub title: String,
     pub label: String,
@@ -102,11 +104,7 @@ impl Image2d {
             let r1 = (r0 + TILE).min(self.rows);
             for c0 in (0..self.cols).step_by(TILE) {
                 let c1 = (c0 + TILE).min(self.cols);
-                let mut pixels = Vec::with_capacity((r1 - r0) * (c1 - c0));
-                for r in r0..r1 {
-                    let row = &self.data[r * self.cols + c0..r * self.cols + c1];
-                    pixels.extend(row.iter().map(|&v| self.cmap.color(v, &norm)));
-                }
+                let pixels = self.tile_pixels(r0..r1, c0..c1, &norm);
                 let image = ColorImage::new([c1 - c0, r1 - r0], pixels);
                 let texture =
                     ctx.load_texture(format!("{name}-{r0}-{c0}"), image, TextureOptions::NEAREST);
@@ -119,6 +117,24 @@ impl Image2d {
                 });
             }
         }
+    }
+
+    /// The pixels of the texture of rows `rows`, columns `cols`, top row
+    /// first. A texture is drawn with its first row at the top and the plot's
+    /// time axis increases upwards, so the rows go from the last (the newest)
+    /// down to the first: the newest line of the file is at the top.
+    pub fn tile_pixels(
+        &self,
+        rows: std::ops::Range<usize>,
+        cols: std::ops::Range<usize>,
+        norm: &Norm,
+    ) -> Vec<Color32> {
+        let mut pixels = Vec::with_capacity(rows.len() * cols.len());
+        for r in rows.rev() {
+            let row = &self.data[r * self.cols + cols.start..r * self.cols + cols.end];
+            pixels.extend(row.iter().map(|&v| self.cmap.color(v, norm)));
+        }
+        pixels
     }
 
     /// Plot rectangle of a tile: `(distance min, distance max, time min, time max)`.
@@ -151,6 +167,37 @@ impl Image2d {
     pub fn color_at_unit(&self, u: f32) -> Color32 {
         let i = ((u.clamp(0.0, 1.0)) * (self.cmap.len() as f32 - 1.0)).round() as usize;
         self.cmap.entry(i)
+    }
+
+    /// A grey image of `rows` x `cols` row-major values on `[vmin, vmax]`,
+    /// uploaded to `ctx`: black at `vmin`, white at `vmax`.
+    #[cfg(test)]
+    pub fn grey_for_tests(
+        ctx: &egui::Context,
+        (rows, cols): (usize, usize),
+        data: Vec<f32>,
+        (t_extent, d_extent): ([f64; 2], [f64; 2]),
+        (vmin, vmax): (f64, f64),
+    ) -> Image2d {
+        assert_eq!(data.len(), rows * cols);
+        let lut: Vec<u8> = (0..=255u8).flat_map(|v| [v, v, v, 255]).collect();
+        let cmap = Colormap::new("gray", &lut, [0, 0, 0, 255], [255; 4], [255, 0, 0, 255])
+            .expect("a grey table");
+        let mut img = Image2d {
+            title: String::new(),
+            label: String::new(),
+            rows,
+            cols,
+            data,
+            t_extent,
+            d_extent,
+            vmin,
+            vmax,
+            cmap,
+            tiles: Vec::new(),
+        };
+        img.upload(ctx, "test");
+        img
     }
 }
 
@@ -404,6 +451,63 @@ pub fn envelope(x: &[f64], y: &[f64], x_range: (f64, f64), bins: usize) -> Vec<[
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Row `r` of a `rows` x `cols` image holds the value `r` everywhere.
+    fn rows_numbered(rows: usize, cols: usize) -> Vec<f32> {
+        (0..rows * cols).map(|i| (i / cols) as f32).collect()
+    }
+
+    #[test]
+    fn a_texture_holds_the_newest_row_first() {
+        let ctx = egui::Context::default();
+        let img = Image2d::grey_for_tests(
+            &ctx,
+            (4, 3),
+            rows_numbered(4, 3),
+            ([0.0, 4.0], [0.0, 30.0]),
+            (0.0, 3.0),
+        );
+        let norm = Norm::new(img.vmin, img.vmax);
+        let px = img.tile_pixels(0..4, 0..3, &norm);
+        let shade = |r: usize| img.cmap.color(r as f32, &norm);
+        // Top row of the texture: the last row of the data (the newest line).
+        assert!(px[..3].iter().all(|&c| c == shade(3)), "{:?}", &px[..3]);
+        assert!(px[9..].iter().all(|&c| c == shade(0)), "{:?}", &px[9..]);
+        assert_ne!(shade(3), shade(0));
+        // A tile covers its own rows, newest first.
+        let part = img.tile_pixels(1..3, 1..2, &norm);
+        assert_eq!(part, vec![shade(2), shade(1)]);
+    }
+
+    #[test]
+    fn the_last_tile_covers_the_latest_times() {
+        let ctx = egui::Context::default();
+        let rows = TILE + 5;
+        let img = Image2d::grey_for_tests(
+            &ctx,
+            (rows, 1),
+            rows_numbered(rows, 1),
+            ([10.0, 10.0 + rows as f64], [0.0, 1.0]),
+            (0.0, rows as f64 - 1.0),
+        );
+        assert_eq!(img.tiles.len(), 2);
+        let (first, last) = (&img.tiles[0], &img.tiles[1]);
+        assert_eq!(
+            (first.r0, first.r1, last.r0, last.r1),
+            (0, TILE, TILE, rows)
+        );
+        let (_, _, f0, f1) = img.tile_extent(first);
+        let (_, _, l0, l1) = img.tile_extent(last);
+        assert_eq!(
+            (f0, f1, l0, l1),
+            (
+                10.0,
+                10.0 + TILE as f64,
+                10.0 + TILE as f64,
+                10.0 + rows as f64
+            )
+        );
+    }
 
     #[test]
     fn envelope_keeps_short_curves_whole() {

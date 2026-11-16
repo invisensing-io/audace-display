@@ -102,7 +102,9 @@ or Vulkan, whichever the machine has.
   *CLI defaults* puts every option back. A changed option is shown in bold.
   The view is recomputed a moment after the last change (turn this off in
   Settings for very large files, then press *Render*).
-- **Waterfalls**: time runs downwards, distance left to right. Ctrl+scroll
+- **Waterfalls**: distance left to right, time on the vertical axis with
+  the newest line at the top and older lines below, as in the CLI's figure
+  (the time axis increases upwards). Ctrl+scroll
   (or a pinch) zooms, a drag with the right button zooms into a box, a drag
   or a scroll pans, a double-click comes back: the worker recomputes the
   decimated window you are looking at (more detail when zoomed in). The colour bar carries the
