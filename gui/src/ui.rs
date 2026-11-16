@@ -831,6 +831,19 @@ fn info_view(app: &mut GuiApp, ui: &mut Ui) {
         _ => file.info_text.clone(),
     };
     let text = cli_text::info(lang, &text);
+    // The summary is read as stored; in another unit the quantity is the
+    // one `info` prints in that unit (strain, strain rate).
+    let quantity = s.quantity.as_ref().map(|q| {
+        let unit = app.hello.as_ref().and_then(|h| {
+            h.units
+                .iter()
+                .find(|u| u.name == app.unit && u.name != "rad")
+        });
+        match unit {
+            Some(u) => cli_text::read_as(q, &u.quantity, u.unit.as_deref()),
+            None => q.clone(),
+        }
+    });
     ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
@@ -852,7 +865,7 @@ fn info_view(app: &mut GuiApp, ui: &mut Ui) {
                             format!("{} ({})", s.content_type_name, s.content_type),
                         );
                     }
-                    if let Some(q) = &s.quantity {
+                    if let Some(q) = &quantity {
                         row(Msg::InfoQuantity, cli_text::quantity(lang, q));
                     }
                     row(

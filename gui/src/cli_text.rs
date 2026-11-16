@@ -36,10 +36,48 @@ const HEADS: &[Msg] = &[
 
 const UNITS: &[Msg] = &[Msg::QSourceUnit, Msg::QFrontEndCount];
 
-/// The quantity of a label (`strain rate`, `phase`...) in `lang`; a notation
-/// (`ADC`, `I`, `arg(I+jQ)`, `|signal|`) is unchanged.
+/// The quantity of a label (`strain rate`, `phase`...) in `lang`, each
+/// member of a pair (`strain+amplitude`) on its own; a notation (`ADC`, `I`,
+/// `arg(I+jQ)`, `|signal|`) is unchanged.
 pub fn quantity_head(lang: Lang, head: &str) -> String {
-    word(lang, head, HEADS)
+    head.split('+')
+        .map(|member| word(lang, member, HEADS))
+        .collect::<Vec<_>>()
+        .join("+")
+}
+
+/// The quantity of a file as `info` prints it once its phase is read in
+/// another unit: `stored`, the quantity read as stored (`phase (rad)`,
+/// `phase+amplitude (rad+count)`), with each phase member read as
+/// `quantity` in `unit`, the way invisensing reads it (`strain (nm/m)`,
+/// `strain+amplitude (nm/m+count)`). A file with no phase member, or a text
+/// of another shape, is unchanged.
+pub fn read_as(stored: &str, quantity: &str, unit: Option<&str>) -> String {
+    let (head, units) = match stored.strip_suffix(')').and_then(|s| s.rsplit_once(" (")) {
+        Some((h, u)) => (h, Some(u)),
+        None => (stored, None),
+    };
+    let members: Vec<&str> = head.split('+').collect();
+    let phase = |i: usize| members[i] == "phase";
+    let head = (0..members.len())
+        .map(|i| if phase(i) { quantity } else { members[i] })
+        .collect::<Vec<_>>()
+        .join("+");
+    let (Some(units), Some(unit)) = (units, unit) else {
+        return match units {
+            None => head,
+            Some(_) => stored.to_string(),
+        };
+    };
+    let unit_members: Vec<&str> = units.split('+').collect();
+    if unit_members.len() != members.len() {
+        return stored.to_string();
+    }
+    let units = (0..members.len())
+        .map(|i| if phase(i) { unit } else { unit_members[i] })
+        .collect::<Vec<_>>()
+        .join("+");
+    format!("{head} ({units})")
 }
 
 /// The unit of a label in `lang`: a unit that is a word (`source unit²`) is
@@ -777,6 +815,28 @@ mod tests {
             assert_eq!(stats(Lang::En, s), s);
             assert_eq!(info(Lang::En, s), s);
         }
+    }
+
+    #[test]
+    fn a_phase_read_in_another_unit_changes_its_quantity() {
+        let strain = |s| read_as(s, "strain", Some("nm/m"));
+        assert_eq!(strain("phase (rad)"), "strain (nm/m)");
+        assert_eq!(
+            read_as("phase (rad)", "strain rate", Some("nm/m/s")),
+            "strain rate (nm/m/s)"
+        );
+        assert_eq!(
+            strain("phase+amplitude (rad+count)"),
+            "strain+amplitude (nm/m+count)"
+        );
+        assert_eq!(strain("amplitude (count)"), "amplitude (count)");
+        assert_eq!(strain("phase"), "strain");
+        assert_eq!(strain("phase+amplitude (rad)"), "phase+amplitude (rad)");
+        assert_eq!(
+            quantity(FR, &strain("phase+amplitude (rad+count)")),
+            "déformation+amplitude (nm/m+count)"
+        );
+        assert_eq!(quantity(FR, "arg(I+jQ) (rad)"), "arg(I+jQ) (rad)");
     }
 
     #[test]
