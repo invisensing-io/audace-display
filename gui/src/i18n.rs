@@ -654,6 +654,8 @@ catalogue! {
     InfoStd = "std", "écart-type";
     TrigActual = "actual {frequency} Hz", "réelle {frequency} Hz";
     CorrectionCount = "{tag}: count (no time map)", "{tag}\u{a0}: comptage (pas de table de temps)";
+    /// The tag of a file whose times were not corrected.
+    CorrectionNone = "none", "aucune";
     CorrectionCorrected = "{tag}: corrected", "{tag}\u{a0}: corrigé";
     CorrectionVsCount = "{delta} ms vs the count", "{delta} ms par rapport au comptage";
     CorrectionStartTime = "start time", "heure de début";

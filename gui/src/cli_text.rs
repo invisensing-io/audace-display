@@ -355,12 +355,15 @@ pub fn trig_frequency(lang: Lang, text: &str) -> String {
 
 /// How the file's times were stamped: `none: count (no time map)`,
 /// `cardclock-v1: corrected, +0.098 ms vs the count (tracking, +/-61 us)`.
+/// The tag `none` is a word, translated; a method's name (`cardclock-v1`)
+/// is not.
 pub fn time_correction(lang: Lang, text: &str) -> String {
     if !fr(lang) {
         return text.to_string();
     }
     if let Some(tag) = text.strip_suffix(": count (no time map)") {
-        return lang.f(Msg::CorrectionCount, &[("tag", tag)]);
+        let tag = word(lang, tag, &[Msg::CorrectionNone]);
+        return lang.f(Msg::CorrectionCount, &[("tag", &tag)]);
     }
     let Some((tag, rest)) = text.split_once(": corrected") else {
         return text.to_string();
@@ -953,7 +956,15 @@ mod tests {
         );
         assert_eq!(
             time_correction(FR, "none: count (no time map)"),
-            "none\u{a0}: comptage (pas de table de temps)"
+            "aucune\u{a0}: comptage (pas de table de temps)"
+        );
+        assert_eq!(
+            time_correction(FR, "cardclock-v0: count (no time map)"),
+            "cardclock-v0\u{a0}: comptage (pas de table de temps)"
+        );
+        assert_eq!(
+            time_correction(Lang::En, "none: count (no time map)"),
+            "none: count (no time map)"
         );
         assert_eq!(time_correction(FR, "odd: other"), "odd: other");
         assert_eq!(
