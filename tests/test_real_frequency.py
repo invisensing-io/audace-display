@@ -435,8 +435,8 @@ def test_version_and_dependency_metadata():
     root = Path(__file__).resolve().parents[1]
     text = (root / "pyproject.toml").read_text()
     assert re.search(r'^version = "([^"]+)"', text, re.M).group(1) == audace_display.__version__
-    assert audace_display.__version__ == "0.9.1"
-    assert '"invisensing>=1.6.0"' in text
+    assert audace_display.__version__ == "0.10.0"
+    assert '"invisensing>=1.7.0"' in text
     # The desktop viewer is released with this package, at the same version.
     version = audace_display.__version__
     assert f'gui = ["audace-display-gui=={version}"]' in text

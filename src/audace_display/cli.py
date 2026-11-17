@@ -396,6 +396,7 @@ def do_info(f, args) -> int:
     print(f"  Trig frequency : {_format_trig_frequency(f)}")
     print(f"  Line size      : {f.line_size:,} samples/pulse")
     print(f"  Positions      : {f.positions_per_line:,} per pulse")
+    print(f"  Fiber index    : {_format_fiber_index(f)}")
     print(f"  Spatial step   : {d_step:.3f} m")
     temporal = getattr(f, "temporal_step_s", None)
     if format_version and temporal:
@@ -438,6 +439,22 @@ def do_info(f, args) -> int:
             print(f"\n  Stats for channel '{canonical}'{shown} over {n_stat:,} pulses: "
                   f"no finite sample{note}")
     return 0
+
+
+def _format_fiber_index(f) -> str:
+    """The fibre group index the file's metres are labelled at, with the
+    speed of light in the fibre it gives (invisensing >= 1.7.0):
+    ``1.4682 (204,190,477 m/s)``; ``... (legacy: the file states none)`` for
+    a recording made before the acquisition wrote it (2e8 m/s); ``...
+    (relabelled; the file says 1.49896229)`` with ``--fiber-group-index``."""
+    n, v = f.fiber_group_index, f.light_speed_in_fiber_m_s
+    text = f"{n!r} ({v:,} m/s"
+    recorded = f.recorded_fiber_group_index
+    if (n, v) != (recorded, f.recorded_light_speed_in_fiber_m_s):
+        return f"{text}; relabelled, the file says {recorded!r})"
+    if f.header.light_speed_in_fiber_m_s == 0:
+        return f"{text}; legacy: the file states none)"
+    return f"{text})"
 
 
 def _decode_flags(flags: int, legacy: bool = True) -> str:
@@ -1016,18 +1033,42 @@ def _requested_unit(args) -> Optional[str]:
     return None
 
 
+def _fiber_kwargs(args) -> dict:
+    """``File(...)`` keywords of ``--fiber-group-index N``: ``{}`` without it;
+    else ``{"fiber_group_index": N}`` — the recording's metres labelled at
+    that index (invisensing >= 1.7.0). Only an index below 1, above 100 or
+    not finite is refused, in invisensing's words."""
+    n = getattr(args, "fiber_group_index", None)
+    if n is None:
+        return {}
+    try:
+        from invisensing import light_speed_of_group_index
+    except ImportError:
+        raise AudaceDisplayError(
+            "--fiber-group-index needs invisensing >= 1.7.0 (pip install -U invisensing)."
+        ) from None
+    try:
+        light_speed_of_group_index(n)
+    except ValueError as e:
+        raise AudaceDisplayError(f"--fiber-group-index: {e}") from None
+    return {"fiber_group_index": n}
+
+
 def _open(args) -> File:
     """The file of ``args``: read as strain with ``--nanostrain``
     (``phase_unit="nanostrain"``), as strain rate with ``--strain-rate``
-    (``phase_unit="strain_rate"``), as stored otherwise."""
+    (``phase_unit="strain_rate"``), as stored otherwise; its metres labelled
+    at ``--fiber-group-index`` when given, else at the file's own speed of
+    light in the fibre."""
+    fiber = _fiber_kwargs(args)
     option = _requested_unit(args)
     if option is None:
-        return File(args.path)
+        return File(args.path, **fiber)
     check = _check_strain_rate if option == "--strain-rate" else _check_nanostrain
-    with File(args.path) as probe:
+    with File(args.path, **fiber) as probe:
         check(probe)
     try:
-        return File(args.path, phase_unit=_PHASE_UNIT_OPTIONS[option][0])
+        return File(args.path, phase_unit=_PHASE_UNIT_OPTIONS[option][0], **fiber)
     except ValueError as e:  # a refusal the check above did not foresee
         raise AudaceDisplayError(f"{option}: {e}") from None
 
@@ -1046,6 +1087,16 @@ def _add_io(p: argparse.ArgumentParser) -> None:
                    help="Save to PNG (otherwise interactive display).")
     p.add_argument("--dpi", type=int, default=150, help="PNG DPI (default 150).")
     p.add_argument("--title", default=None, help="Custom figure title.")
+    _add_fiber(p)
+
+
+def _add_fiber(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--fiber-group-index", type=float, default=None, metavar="N",
+                   help="Label the recording's metres at this fibre group index "
+                        "(e.g. 1.4682, SMF-28 at 1550 nm) instead of the speed of "
+                        "light the file states (2e8 m/s, index 1.49896229, on a "
+                        "recording made before the acquisition wrote it). Only the "
+                        "labels change, never the samples. Any number from 1 to 100.")
 
 
 def _add_window(p: argparse.ArgumentParser) -> None:
@@ -1185,6 +1236,10 @@ Examples
   audace-display phase.h5 --strain-rate
   audace-display fft phase.h5 --strain-rate --position 120
 
+  # An old recording (2e8 m/s) labelled at its fibre's group index
+  audace-display info old.dat --fiber-group-index 1.4682
+  audace-display heatmap old.dat --fiber-group-index 1.4682 --start-distance 1000
+
   # Demodulation via an external script (no demod code shipped) -> heatmap
   audace-display demod raw.dat --script my_demod.py --save demod.png
 
@@ -1222,6 +1277,15 @@ Channels available per file mode:
   increment over one period: NaN, shown as missing (skipped by the time bins
   and the scales; the column's mean in the FFT and band filters). Refused as
   --nanostrain, and for a file without a trigger frequency.
+
+Distances: every metre (axes, --start-distance / --end-distance,
+  --position, the gauge length) is at the speed of light in the fibre the
+  file states -- round(c / n) of the fibre group index n the acquisition was
+  configured with (default 1.4682) -- shown by `info` ("Fiber index"); a
+  recording made before the acquisition wrote it is at 2e8 m/s (index
+  1.49896229), as before. --fiber-group-index N (every view) labels the
+  recording at N instead (invisensing >= 1.7.0): the samples are the same,
+  the metres are 2.1 % longer at 1.4682 than at 2e8 m/s.
 
 Large files (200 MB - 10 GB): streamed, decimated reading, bounded RAM.
 
@@ -1432,6 +1496,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Metadata + stats of the default channel.",
                         description=_INFO_DESC, epilog=_INFO_EPILOG)
     p_info.add_argument("path", help="File (.dat / .h5 / .hdf5 / .tdms / .sgy)")
+    _add_fiber(p_info)
     _add_unit(p_info)
     p_info.set_defaults(func=lambda a: _open_and_run(do_info, a))
 

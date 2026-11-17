@@ -89,7 +89,13 @@ def _build_meta(f) -> dict:
 
     ``trig_frequency`` is the requested frequency (int, unchanged);
     ``trig_frequency_real_hz`` (float, added in 0.6.0) is the actual pulse rate
-    (:func:`audace_display.reader.line_rate_hz`).
+    (:func:`audace_display.reader.line_rate_hz`). ``light_speed_in_fiber_m_s``
+    (int) and ``fiber_group_index`` (float), added in 0.10.0: the speed of
+    light in the fibre the file's metres are at (``round(c / n)``; 2e8 m/s,
+    index 1.49896229, on a recording made before the acquisition wrote it;
+    the ``--fiber-group-index`` given otherwise) -- a plugin turning metres
+    into positions uses ``v / (2 * sample_rate)`` per position, as
+    ``spatial_step_m`` gives.
     """
     return {
         "sample_rate": f.sample_rate,
@@ -111,6 +117,9 @@ def _build_meta(f) -> dict:
         "card": f.card,
         "spatial_step_m": f.spatial_step_m,
         "temporal_step_s": f.temporal_step_s,
+        # The fibre (invisensing >= 1.7.0): the speed every metre is at.
+        "light_speed_in_fiber_m_s": f.light_speed_in_fiber_m_s,
+        "fiber_group_index": f.fiber_group_index,
     }
 
 

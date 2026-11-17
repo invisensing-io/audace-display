@@ -25,7 +25,8 @@ pip install audace-display[interactive] # + pyqtgraph backend (fast interactive)
 pip install "audace-display[gui]"       # + the desktop viewer (audace-display gui)
 ```
 
-Dependencies: `numpy`, `matplotlib`, `invisensing` >= 1.6.0 (gauge length and
+Dependencies: `numpy`, `matplotlib`, `invisensing` >= 1.7.0 (the speed of light
+in the fibre a file states, and `--fiber-group-index`, since 1.7.0; gauge length and
 phase as strain and strain rate since 1.6.0; content-type registry revision 4 since 1.5.0;
 corrected line times since 1.4.0; actual trigger frequency since 1.3.0; O(1)
 seek and TDMS/SEG-Y streaming since 1.1.0). Optional
@@ -191,7 +192,7 @@ and aggregated on the fly into a `--max-time-bins x --max-space-bins` grid
 
 `.dat` and `.h5` / `.hdf5` stream natively; `.tdms` and `.sgy` stream too, and
 `--start-time` seeks directly (O(1) seek) -- both from invisensing 1.1.0, below
-the required invisensing >= 1.6.0.
+the required invisensing >= 1.7.0.
 
 ## Actual trigger frequency
 
@@ -272,6 +273,35 @@ The `magnitude/` child of a split arctan/magnitude recording (`hw_amplitude`)
 is read as `uint16`, so its values above 32767 show as they are (40000 -> 1.22 V
 at a 1 V range), not negative.
 
+### The fibre group index (0.10.0)
+
+Every metre -- the distance axes, `--start-distance` / `--end-distance`,
+`--position`, the spatial step, the gauge length -- is at the speed of light
+in the fibre the file states: the Audace acquisition takes the fibre's group
+index `n` as a parameter (default 1.4682, SMF-28 at 1550 nm) and writes
+`v = round(c / n)` into every file (invisensing >= 1.7.0 reads it). `info`
+prints it:
+
+```
+  Fiber index    : 1.4682 (204,190,477 m/s)
+  Spatial step   : 0.408 m
+```
+
+A recording made before the acquisition wrote it is at the legacy 2e8 m/s
+(`Fiber index : 1.49896229 (200,000,000 m/s; legacy: the file states
+none)`), as before. When its fibre is known, `--fiber-group-index N` (every
+view; any number from 1 to 100) labels it at that index: the samples are
+the same, the metres follow (2.1 % longer at 1.4682 than at 2e8 m/s), and
+`info` says `relabelled, the file says 1.49896229`:
+
+```bash
+audace-display info old.dat --fiber-group-index 1.4682
+audace-display heatmap old.dat --fiber-group-index 1.4682 --start-distance 1000
+```
+
+The desktop viewer shows the file's index in its info text; relabelling is
+on the command line only for now.
+
 ## Phase as strain, in nm/m (0.9.0)
 
 `--nanostrain` shows a phase as **strain, in nm/m**, in every view (auto,
@@ -292,7 +322,9 @@ audace-display info phase.h5 --nanostrain
 ```
 
 - `NANOSTRAIN_PER_RAD_METRE` is invisensing's constant: 110.37 nm/m per
-  rad/m, from `ΔΦ = 2β(n + Cε)·ε·L` at λ = 1550.12 nm and n = 1.46.
+  rad/m, from `ΔΦ = 2β(n + Cε)·ε·L` at λ = 1550.12 nm and n = 1.46 -- the
+  core's phase index, not the fibre group index the metres are at: it does
+  not follow `--fiber-group-index` (the gauge length, a distance, does).
 - The gauge length is the one the file records (`info` prints it: `Gauge
   length : 9.6 m`), the gauge the producer applied. Audace writes it on a
   phase only, and only from the release that adds it: `--nanostrain` and
@@ -452,7 +484,8 @@ See [`docs/DEMOD_PLUGIN.md`](https://github.com/invisensing-io/audace-display/bl
   `sample_rate` (intra-pulse Hz), `trig_frequency` (requested pulse rate Hz),
   `trig_frequency_real_hz` (actual pulse rate Hz, since 0.6.0), `line_size`,
   and `meta` (full header dict: `positions_per_line`, `range_v`, `flags`,
-  `mode`, `num_lines`, `trig_frequency_real_hz`, …).
+  `mode`, `num_lines`, `trig_frequency_real_hz`, `spatial_step_m`,
+  `light_speed_in_fiber_m_s`, `fiber_group_index`, …).
 - **Output**: a 2-D `(rows, positions)` array — `rows` **must** match the input
   (don't resample time), `positions` **constant** across chunks. Cast to
   `float32` for display.

@@ -45,7 +45,10 @@ def position_step_m(f, n_positions: Optional[int] = None) -> float:
     """Spatial step (m) between consecutive positions.
 
     ``n_positions`` lets the count be overridden (output of a demod plugin); by
-    default ``f.positions_per_line`` is used.
+    default ``f.positions_per_line`` is used. The metres are invisensing's
+    ``File.distance``: at the speed of light in the fibre the file states
+    (2e8 m/s on a recording made before the acquisition wrote it), or at the
+    ``--fiber-group-index`` the file was opened with.
     """
     n = n_positions if n_positions is not None else f.positions_per_line
     return f.distance / max(n, 1)

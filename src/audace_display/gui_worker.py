@@ -122,9 +122,13 @@ PROTOCOL = 1
 VIEWS = ("info", "heatmap", "bandheatmaps", "fft", "trace", "scope", "inspect")
 
 #: Options of the CLI that do not apply to an on-screen view: files, the
-#: matplotlib figure, the backend, the demod plugin script.
+#: matplotlib figure, the backend, the demod plugin script — and the fibre
+#: group index a recording is relabelled at, which the command line offers
+#: (`--fiber-group-index`) but the viewer does not yet: its file summary and
+#: every view would have to follow it together.
 HIDDEN_OPTIONS = frozenset(
-    {"help", "path", "save", "dpi", "title", "backend", "aspect", "script"}
+    {"help", "path", "save", "dpi", "title", "backend", "aspect", "script",
+     "fiber_group_index"}
 )
 
 #: Units a phase can be shown in, beyond the radians it is stored in:
@@ -907,6 +911,10 @@ class Worker:
                 "time_correction": cli._format_time_correction(f),
                 "sample_rate_hz": int(f.sample_rate),
                 "positions": int(f.positions_per_line),
+                # The fibre the metres are at (additive keys: a viewer that
+                # does not know them ignores them; the info text shows them).
+                "light_speed_in_fiber_m_s": int(f.light_speed_in_fiber_m_s),
+                "fiber_group_index": float(f.fiber_group_index),
                 "step_m": step,
                 "length_m": int(f.positions_per_line) * step,
                 "compression": cli._format_compression(f),

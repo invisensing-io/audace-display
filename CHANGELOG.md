@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.10.0
+
+Requires `invisensing >= 1.7.0` (publish it to PyPI first). Released with
+`audace-display-gui` 0.10.0 (no change to the viewer; publish it first: the
+`gui` extra pins it).
+
+- **Every metre at the file's speed of light in the fibre.** The Audace
+  acquisition now takes the fibre's group index `n` (default 1.4682, SMF-28
+  at 1550 nm) and writes `v = round(c / n)` m/s into every file; invisensing
+  1.7.0 reads it, and the distance axes, the spatial step,
+  `--start-distance` / `--end-distance`, `--position` and the gauge length
+  follow it (0.408 m per position at 250 MS/s at 1.4682). A recording made
+  before the field reads at 2e8 m/s, exactly as with 0.9.1.
+- **`info` prints the index**: `Fiber index : 1.4682 (204,190,477 m/s)`;
+  `... (200,000,000 m/s; legacy: the file states none)` on an older
+  recording; `...; relabelled, the file says 1.49896229)` with the option
+  below.
+- **`--fiber-group-index N`** on every view (`auto`, `info`, `heatmap`,
+  `bandheatmaps`, `fft`, `trace`, `scope`, `inspect`, `demod`): opens the
+  file with invisensing's `File(path, fiber_group_index=N)`, which labels the
+  recording at that index -- only the labels change, never the samples.
+  Any number from 1 to 100; anything else is refused with invisensing's
+  sentence (`ERROR: --fiber-group-index: fibre group index ... refused: it
+  must be a number from 1 to 100`), exit code 1. Command line only: the
+  desktop viewer does not offer it yet (`HIDDEN_OPTIONS`).
+- **Demod plugins** receive `meta["light_speed_in_fiber_m_s"]` (int, m/s)
+  and `meta["fiber_group_index"]` (float), the speed and index the file's
+  metres are at (`docs/DEMOD_PLUGIN.md`).
+- The viewer's file summary carries `light_speed_in_fiber_m_s` and
+  `fiber_group_index` (additive keys, protocol 1 unchanged).
+
 ## 0.9.1
 
 Released with `audace-display-gui` 0.9.1 (publish that one first: the `gui`

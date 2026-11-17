@@ -190,6 +190,7 @@ flags your kwargs don't expose:
 | `dtype`               | numpy dtype of `chunk` (from the content type on a v1 file, which carries no FLOAT flag) — since 0.7.0 |
 | `card`                | Code of the card that recorded the file (`"p18"`, `"p21"`, `"s125"`, `"s500"`) or `None` — since 0.7.0 |
 | `spatial_step_m`, `temporal_step_s` | Metres between positions, seconds between lines (`None` when unknown) — since 0.7.0 |
+| `light_speed_in_fiber_m_s`, `fiber_group_index` | The speed of light in the fibre the file's metres are at (int, m/s: `round(c / n)` of the fibre group index `n`) and that index (float); 200 000 000 m/s and 1.49896229 on a recording made before the acquisition wrote it, the `--fiber-group-index` given otherwise. A metre is `v / (2 · sample_rate)` per position — since 0.10.0 |
 
 ### Requested vs actual trigger frequency
 

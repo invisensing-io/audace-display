@@ -3,6 +3,14 @@
 The desktop viewer, released on PyPI as `audace-display-gui` with
 audace-display at the same version (`pip install "audace-display[gui]"`).
 
+## 0.10.0
+
+No change to the viewer: released with audace-display 0.10.0 at the same
+version. Its info text now has a `Fiber index` line (the fibre group index
+the file's metres are at), written by audace-display's worker; the file
+summary carries `light_speed_in_fiber_m_s` and `fiber_group_index` (keys
+this viewer ignores). Worker protocol 1, unchanged.
+
 ## 0.9.1
 
 First release on PyPI. Speaks the worker protocol 1 of audace-display 0.9.0
